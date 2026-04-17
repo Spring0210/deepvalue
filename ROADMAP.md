@@ -4,14 +4,85 @@
 
 ---
 
-## Current State (v0.1)
+## Current State (v0.2)
 
-- 14 Buffett metrics with weighted scoring (0–100)
-- yfinance data backend (US stocks, HK stocks, A-shares)
-- RAG-powered chat advisor (Groq + FAISS)
-- AI streaming investment recommendation
+- 14 Buffett metrics with weighted scoring (0–100), grouped by Income Statement / Balance Sheet / Cash Flow
+- yfinance data backend — no API key required (US/HK/A-shares)
+- Extended quote data: ROE, PEG, FCF Yield, Forward P/E, EV/EBITDA, Revenue Growth, Sector/Industry
+- RAG-powered chat advisor (Groq LLaMA 3.1-8B + FAISS)
+- Streaming AI investment recommendation with sector-aware prompts
 - Financial statement viewer (Income / Balance / Cash Flow)
-- Bar chart visualization
+- Apple HIG dark UI — bar chart, ratio cards, score gauge
+
+---
+
+## Phase 0 — Technical Debt & Bug Fixes (Fix Before Next Feature)
+
+> These are architecture problems identified in code review. Must be resolved before the project scales.
+
+### P0 — Critical (breaks correctness or security)
+
+- [ ] **`lru_cache` has no TTL** (`financial.py`)
+  — Data never refreshes while the server is running. A stock searched at startup stays cached forever.
+  — Fix: replace with a TTL cache (e.g. `cachetools.TTLCache`, 15-min expiry) or `functools.lru_cache` + timestamp invalidation.
+
+- [ ] **Chat is single-turn — no conversation history** (`rag.py` / `ChatWindow.tsx`)
+  — Every message is sent as a fresh, standalone prompt. The AI has no memory of previous turns in the same session.
+  — Fix: maintain a `messages: list[dict]` array in `ChatWindow`, pass it to `POST /api/chat`, and build a proper multi-turn message list for Groq (`[{role: system}, {role: user}, {role: assistant}, ...]`).
+
+- [ ] **CORS origin hardcoded to `localhost:5173`** (`main.py`)
+  — Will reject all requests when deployed to any non-localhost environment.
+  — Fix: read allowed origins from an env var (`ALLOWED_ORIGINS`), fall back to localhost in dev.
+
+### P1 — High (degrades quality or creates risk)
+
+- [ ] **LLM model too small for financial reasoning** (`rag.py`)
+  — `llama-3.1-8b-instant` is optimized for speed, not depth. Produces shallow or generic financial analysis.
+  — Fix: use `llama-3.3-70b-versatile` for `stream_recommendation()` where quality matters; keep 8B for fast chat.
+
+- [ ] **AI Pick recommendation lost on tab switch** (`AIRecommendation.tsx`)
+  — Generated text is stored in component-local `useState`. Switching tabs destroys it.
+  — Fix: lift `recommendationText` and `recommendationTicker` into `StockContext`.
+
+- [ ] **Prompt uses single `user` message — no system/user separation** (`rag.py`)
+  — Role definition, RAG context, stock data, and user question are all one `user` blob. LLMs follow system-message persona more reliably.
+  — Fix: split into `[{role: "system", content: persona}, {role: "user", content: rag + data + question}]`.
+
+- [ ] **Ticker input not sanitized — prompt injection risk** (`stock.py` / `rag.py`)
+  — A malformed ticker like `AAPL\n\nIgnore all above instructions` passes directly into prompt strings.
+  — Fix: validate ticker with regex `^[A-Z0-9.\-]{1,10}$` in the route handler before any processing.
+
+- [ ] **`assert` used for weight validation in production code** (`buffett.py`)
+  — Python's `-O` flag strips `assert` statements. A weight miscalculation would silently produce wrong scores.
+  — Fix: replace with `if not ...: raise ValueError(...)`.
+
+### P2 — Medium (performance / UX)
+
+- [ ] **yfinance calls are synchronous — blocks FastAPI event loop** (`financial.py`)
+  — Under concurrent requests, all API calls queue behind each other on the single event loop thread.
+  — Fix: wrap yfinance calls with `await asyncio.to_thread(...)` and make route handlers `async def`.
+
+- [ ] **Search clears stale data immediately** (`StockContext.tsx`)
+  — `setRatios([])` / `setFinancials(null)` fires before new data arrives, causing a full-screen loading flash.
+  — Fix: keep previous data visible while loading new data; only replace on success (stale-while-revalidate pattern).
+
+- [ ] **No React Error Boundary**
+  — Any unhandled component exception (e.g. malformed API response) renders a blank white page.
+  — Fix: wrap `<Dashboard>` and `<ChatWindow>` in an `<ErrorBoundary>` that shows a graceful fallback UI.
+
+### P3 — Low (quality improvements)
+
+- [ ] **RAG uses small 384-dim embeddings with no re-ranking** (`rag.py`)
+  — `all-MiniLM-L6-v2` is a general-purpose model. Retrieval quality for financial terminology is limited.
+  — Fix (later): add a cross-encoder re-ranking step, or switch to a finance-tuned embedding model.
+
+- [ ] **Knowledge base is a single static file** (`buffett_knowledge.txt`)
+  — All queries retrieve from the same undifferentiated corpus regardless of sector or question type.
+  — Fix (later): split into domain-specific documents (Buffett principles, tech sector, consumer staples, etc.) and tag with metadata for filtered retrieval.
+
+- [ ] **No rate limiting on API routes**
+  — A single client can flood yfinance with requests, triggering Yahoo Finance IP bans.
+  — Fix: add `slowapi` rate limiter (e.g. 10 req/min per IP on stock endpoints).
 
 ---
 
@@ -188,4 +259,4 @@
 
 ---
 
-*Last updated: 2026-04-17*
+*Last updated: 2026-04-17 · v0.2*

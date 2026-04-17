@@ -1,35 +1,42 @@
-# Warren Buffett AI Stock Analyzer — Architecture & Development Plan
+# BuffettAI — Architecture Reference
+
+> Last updated: 2026-04-17 · Current version: v0.2
+
+---
 
 ## Project Overview
 
-An AI-powered stock analysis web application that combines Warren Buffett's fundamental investing rules with a RAG-based chatbot. Users input any public stock ticker to get a full financial health assessment and can converse with an AI trained on Buffett's investment philosophy.
+An AI-powered US equity analysis platform that combines Warren Buffett's fundamental investing criteria with modern quantitative metrics. Users search any publicly traded stock to receive a weighted Buffett score (0–100), full financial statement data, and a streaming AI investment recommendation grounded in a RAG knowledge base.
 
 ---
 
 ## Tech Stack
 
-### Backend — Python
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Web Framework | **FastAPI** | REST API, async support, auto docs (/docs) |
-| Server | **Uvicorn** | ASGI server |
-| Financial Data | **Financial Modeling Prep (FMP) API** | Fetch income statement, balance sheet, cash flow |
-| RAG - Embeddings | **sentence-transformers** | Embed Buffett knowledge base into vectors |
-| RAG - Vector Store | **FAISS** | Local similarity search (no external DB needed) |
-| RAG - Orchestration | **LangChain** | Text splitting, retrieval chain |
-| LLM | **Groq (LLaMA 3.1-8b-instant)** | Fast, free-tier inference for chat responses |
-| Config | **python-dotenv** | Environment variable management |
+### Backend — Python 3.11
 
-### Frontend — React
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Framework | **React 18 + TypeScript** | UI framework |
-| Build Tool | **Vite** | Fast dev server & bundler |
-| Styling | **Tailwind CSS** | Utility-first CSS, dark theme |
-| Charts | **Recharts** | Financial ratio bar/line charts |
-| HTTP Client | **Axios** | API requests |
-| State | **React Context + useState** | Global stock data & chat state |
-| Streaming | **Fetch ReadableStream** | Real-time streaming chat output |
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Web Framework | **FastAPI 0.111** | Async-capable REST API, auto OpenAPI docs at `/docs` |
+| Server | **Uvicorn** | ASGI server with hot-reload in dev |
+| Financial Data | **yfinance ≥ 1.3.0** | Yahoo Finance — no API key required; covers US/HK/A-shares |
+| Embeddings | **sentence-transformers `all-MiniLM-L6-v2`** | 384-dim general-purpose embeddings |
+| Vector Store | **FAISS (CPU)** | Local similarity search, index saved to disk on first run |
+| RAG Orchestration | **LangChain 0.2** | Text splitting, document loading |
+| LLM | **Groq — `llama-3.1-8b-instant`** | Fast free-tier inference; used for both chat and recommendations |
+| HTTP Client | **httpx** | Async-capable; used internally |
+| Config | **python-dotenv** | Loads `backend/.env` |
+
+### Frontend — React + TypeScript
+
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Framework | **React 18 + TypeScript** | Strict mode enabled |
+| Build Tool | **Vite 5** | Dev server on `:5173`, proxies `/api` → `:8000` |
+| Styling | **Tailwind CSS** | Utility classes + inline `style` for dynamic colors |
+| Charts | **Recharts** | Bar chart for ratio visualization |
+| HTTP Client | **Axios** | REST calls; `fetch` used for SSE streaming |
+| State | **React Context + useState** | Single `StockContext` holds all dashboard state |
+| Streaming | **Fetch ReadableStream** | Parses `text/event-stream` (SSE) for live token output |
 
 ---
 
@@ -39,378 +46,279 @@ An AI-powered stock analysis web application that combines Warren Buffett's fund
 buffett-analyzer/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                    # FastAPI app entry, CORS, router registration
-│   │   ├── config.py                  # Pydantic Settings, load .env
+│   │   ├── main.py                      # FastAPI entry: CORS, router registration, FAISS init on startup
+│   │   ├── config.py                    # Loads .env: GROQ_API_KEY, GROQ_MODEL
 │   │   ├── api/
 │   │   │   └── routes/
-│   │   │       ├── stock.py           # GET /api/stock/{ticker}/financials
-│   │   │       │                      # GET /api/stock/{ticker}/ratios
-│   │   │       └── chat.py            # POST /api/chat  (SSE streaming)
+│   │   │       ├── stock.py             # GET  /api/stock/{ticker}/quote
+│   │   │       │                        # GET  /api/stock/{ticker}/financials
+│   │   │       │                        # GET  /api/stock/{ticker}/ratios  (+ weighted_score)
+│   │   │       │                        # POST /api/stock/recommendation   (SSE stream)
+│   │   │       └── chat.py              # POST /api/chat  (SSE stream)
 │   │   ├── services/
-│   │   │   ├── financial.py           # FMP API client, field mapping, LRU cache
-│   │   │   ├── buffett.py             # All 11 ratio calculations + pass/fail
-│   │   │   └── rag.py                 # FAISS index build, retrieval, Groq call
+│   │   │   ├── financial.py             # yfinance wrapper; lru_cache per ticker
+│   │   │   │                            # get_stock_quote() — price + extended info (ROE, PEG, FCF yield…)
+│   │   │   │                            # get_stock_data()  — income / balance / cashflow DataFrames
+│   │   │   ├── buffett.py               # 14 Buffett ratios as BuffettRatio dataclass
+│   │   │   │                            # compute_ratios()        → list[BuffettRatio]
+│   │   │   │                            # compute_weighted_score() → float 0–100
+│   │   │   └── rag.py                   # FAISS build/load, retrieve(), stream_chat(), stream_recommendation()
 │   │   └── data/
-│   │       └── buffett_knowledge.txt  # RAG source documents
+│   │       ├── buffett_knowledge.txt    # RAG source: ~30 chunks on Buffett principles
+│   │       └── faiss_index/             # Auto-generated on first run (git-ignored)
 │   ├── requirements.txt
 │   └── .env.example
 │
 ├── frontend/
 │   ├── index.html
-│   ├── vite.config.ts
+│   ├── vite.config.ts                   # Proxy: /api → http://localhost:8000
 │   ├── tailwind.config.js
 │   ├── tsconfig.json
 │   ├── package.json
 │   └── src/
-│       ├── main.tsx                   # React DOM entry
-│       ├── App.tsx                    # Root layout: Header + Dashboard + Chat
-│       ├── index.css                  # Tailwind directives
-│       ├── types/
-│       │   └── index.ts               # Shared TypeScript interfaces
-│       ├── api/
-│       │   └── client.ts              # Axios instance + API functions
-│       ├── context/
-│       │   └── StockContext.tsx       # Global state: ticker, ratios, statements
+│       ├── main.tsx
+│       ├── App.tsx                      # Root layout: Header | Dashboard | ChatWindow
+│       ├── index.css                    # Tailwind + scrollbar overrides + SF Pro font stack
+│       ├── types/index.ts               # BuffettRatio, StockQuote, StockFinancials, Message
+│       ├── api/client.ts                # fetchQuote, fetchRatios, fetchFinancials,
+│       │                                # streamChat, streamRecommendation
+│       ├── context/StockContext.tsx     # ticker, quote, ratios, weightedScore, financials, loading, error
 │       └── components/
-│           ├── Header.tsx             # App title + stock search bar
-│           ├── StockSearch.tsx        # Ticker input with search button
-│           ├── Dashboard/
-│           │   ├── index.tsx          # Tab switcher: Ratios / Statements / Charts
-│           │   ├── RatioTable.tsx     # 11 ratios table, green/red pass/fail badges
-│           │   ├── RatioChart.tsx     # Recharts bar chart, ratio trends over 4 years
-│           │   └── StatementTable.tsx # Income / Balance Sheet / Cash Flow tables
+│           ├── Header.tsx               # Branding + StockSearch
+│           ├── StockSearch.tsx          # Ticker input → triggers search()
+│           └── Dashboard/
+│               ├── index.tsx            # Tab bar: Ratios | Chart | Statements | AI Pick
+│               ├── StockOverview.tsx    # Price, change, market cap, P/E, ROE, PEG, FCF yield…
+│               ├── RatioTable.tsx       # Score ring + 14 ratio cards grouped by statement type
+│               ├── RatioChart.tsx       # Recharts bar chart (pass=green / fail=red)
+│               ├── StatementTable.tsx   # Collapsible Income / Balance / Cash Flow tables
+│               └── AIRecommendation.tsx # Weighted score gauge + weight breakdown + streaming AI analysis
 │           └── Chatbot/
-│               └── ChatWindow.tsx     # Chat UI with streaming message rendering
+│               └── ChatWindow.tsx       # Single-turn Q&A chat with RAG context injection
 │
-├── .gitignore
+├── ARCHITECTURE.md                      # This file
+├── ROADMAP.md                           # Feature roadmap + known issues backlog
 └── README.md
 ```
 
 ---
 
-## API Design
+## API Reference
 
 ### Stock Endpoints
+
 ```
+GET  /api/stock/{ticker}/quote
+     Response: StockQuote
+       { name, price, change, changesPercentage, marketCap, pe, exchange,
+         sector, industry, summary, forwardPE, pegRatio, roe, roa,
+         revenueGrowth, earningsGrowth, fcfYield, dividendYield, evToEbitda }
+
 GET  /api/stock/{ticker}/financials
-     Response: { financials, balanceSheet, cashflow }
-     — Raw financial statement data (4 years)
+     Response: StockFinancials
+       { financials: {date: {field: value}},
+         balanceSheet: {date: {field: value}},
+         cashflow: {date: {field: value}} }
 
 GET  /api/stock/{ticker}/ratios
-     Response: { ticker, ratios: BuffettRatio[] }
-     — All 11 Buffett ratios with value, threshold, pass/fail
+     Response:
+       { ticker, weighted_score: float,
+         ratios: BuffettRatio[] }
+     BuffettRatio: { name, value, threshold, passes, description,
+                     buffett_logic, category, equation, weight }
+
+POST /api/stock/recommendation           SSE stream
+     Body: { ticker, ratios, weighted_score, quote }
+     Response: text/event-stream tokens → [DONE]
 ```
 
 ### Chat Endpoint
+
 ```
-POST /api/chat
-     Body:    { question: string, ticker: string, ratios: BuffettRatio[] }
-     Response: text/event-stream  (SSE)
-     — Streams LLM response token by token
+POST /api/chat                           SSE stream
+     Body: { question: string, ticker: string, ratios: BuffettRatio[] }
+     Response: text/event-stream tokens → [DONE]
 ```
 
 ---
 
 ## Data Flow
 
-### Financial Dashboard Flow
+### Stock Analysis (on ticker search)
+
 ```
-User inputs ticker (e.g. "AAPL")
-    │
-    ▼
-Frontend → GET /api/stock/AAPL/ratios
-    │
-    ▼
-Backend: financial.py fetches FMP API data (LRU-cached per ticker)
-    │
-    ▼
-Backend: buffett.py computes all 11 ratios, compares to thresholds
-    │
-    ▼
-Response: [{ name, value, threshold, pass, description }, ...]
-    │
-    ▼
-RatioTable renders with green (PASS) / red (FAIL) badges
-RatioChart shows 4-year trend bars
+User types ticker → StockSearch calls search()
+        │
+        ▼
+StockContext fires 3 parallel requests:
+  ├── GET /api/stock/{ticker}/quote      → StockQuote (yfinance .info)
+  ├── GET /api/stock/{ticker}/ratios     → 14 BuffettRatios + weighted_score
+  └── GET /api/stock/{ticker}/financials → raw DataFrames converted to dicts
+        │
+        ▼ (backend)
+financial.py: yf.Ticker(ticker) → .info / .financials / .balance_sheet / .cashflow
+        │  (lru_cache per ticker — no TTL, resets on server restart)
+        ▼
+buffett.py: compute_ratios(data) → 14 BuffettRatio objects
+            compute_weighted_score(ratios) → normalized 0–100 float
+        │
+        ▼ (frontend)
+StockContext stores: ticker, quote, ratios, weightedScore, financials
+        │
+        ├── StockOverview  renders price + 8 extended stats
+        ├── RatioTable     renders score ring + grouped ratio cards
+        ├── RatioChart     renders pass/fail bar chart
+        ├── StatementTable renders collapsible financial tables
+        └── AIRecommendation (on demand — user clicks Generate)
 ```
 
 ### RAG Chat Flow
+
 ```
-User types: "Should I invest in Apple?"
-    │
-    ▼
-Frontend injects current ticker's ratio data as structured context
-    │
-    ▼
-POST /api/chat  { question, ticker, ratios }
-    │
-    ▼
-rag.py: embed question → FAISS similarity search on buffett_knowledge.txt
-    │
-    ▼
-Top-3 relevant chunks retrieved
-    │
-    ▼
-Prompt assembled:
-  [System] You are a Warren Buffett investment advisor.
-  [Context - RAG chunks] ...Buffett principles...
-  [Context - Stock Data] AAPL ratios: Gross Margin 46.2% ✓ ...
-  [User] Should I invest in Apple?
-    │
-    ▼
-Groq LLaMA 3.1-8b-instant streams response token by token
-    │
-    ▼
-Frontend renders tokens in real time via ReadableStream
+User message → ChatWindow
+        │
+        ▼
+POST /api/chat { question, ticker, ratios }
+        │
+        ▼
+rag.py: embed question with all-MiniLM-L6-v2
+        → FAISS similarity_search(k=3) on buffett_knowledge.txt
+        → top-3 chunks as rag_context
+        │
+        ▼
+Prompt assembled (single user message — see known issues):
+  [Role definition]
+  [RAG context chunks]
+  [Stock ratio table: name / value / status / threshold]
+  [User question]
+        │
+        ▼
+Groq llama-3.1-8b-instant streams tokens
+        │
+        ▼
+SSE: "data: <token>\n\n" … "data: [DONE]\n\n"
+        │
+        ▼
+Frontend ReadableStream appends tokens to last assistant message
+```
+
+### AI Recommendation Flow
+
+```
+User clicks "Generate AI Investment Analysis"
+        │
+        ▼
+POST /api/stock/recommendation
+  { ticker, ratios (14 items w/ weight), weighted_score, quote (+ sector/ROE/PEG…) }
+        │
+        ▼
+rag.py: retrieve sector-aware Buffett context (k=4)
+        │
+        ▼
+Rich prompt assembled:
+  [Analyst role + value investing framing]
+  [RAG chunks]
+  [Company snapshot: sector, industry, price, market cap, ROE, PEG,
+   FCF yield, revenue growth, business summary, weighted score]
+  [14 metrics table: status / value / threshold / weight]
+  [Structured output instructions: VERDICT / STRENGTHS / CONCERNS /
+   BUFFETT ALIGNMENT / MODERN CONTEXT]
+        │
+        ▼
+Groq llama-3.1-8b-instant (max_tokens=800, temperature=0.6) streams
+        │
+        ▼
+AIRecommendation parses sections and renders formatted output
 ```
 
 ---
 
-## Buffett Ratio Reference
+## Buffett Ratio Reference (v0.2 — 14 metrics)
 
-| # | Ratio | Formula | Threshold | Statement |
-|---|-------|---------|-----------|-----------|
-| 1 | Gross Margin | Gross Profit / Revenue | ≥ 40% | Income |
-| 2 | SG&A Margin | SG&A / Gross Profit | ≤ 30% | Income |
-| 3 | R&D Margin | R&D / Gross Profit | ≤ 30% | Income |
-| 4 | Depreciation Margin | Depreciation / Gross Profit | ≤ 10% | Income |
-| 5 | Interest Expense Margin | Interest Expense / Operating Income | ≤ 15% | Income |
-| 6 | Effective Tax Rate | Tax / Pre-Tax Income | ≈ Corp rate | Income |
-| 7 | Net Margin | Net Income / Revenue | ≥ 20% | Income |
-| 8 | EPS Growth | Year N EPS / Year N-1 EPS | > 1.0 | Income |
-| 9 | Cash vs Debt | Cash / Current Debt | > 1.0 | Balance |
-| 10 | Adj. Debt-to-Equity | Total Debt / (Assets - Debt) | < 0.80 | Balance |
-| 11 | CapEx Margin | CapEx / Net Income | < 25% | Cash Flow |
+| # | Name | Equation | Threshold | Category | Weight |
+|---|------|----------|-----------|----------|--------|
+| 1 | Gross Margin | Gross Profit / Revenue | ≥ 40% | Income Statement | 13% |
+| 2 | SG&A Margin | SG&A / Gross Profit | ≤ 30% | Income Statement | 7% |
+| 3 | R&D Margin | R&D / Gross Profit | ≤ 30% | Income Statement | 4% |
+| 4 | Depreciation Margin | Depreciation / Gross Profit | ≤ 10% | Income Statement | 6% |
+| 5 | Interest Expense Margin | Interest Expense / Operating Income | ≤ 15% | Income Statement | 8% |
+| 6 | Effective Tax Rate | Tax Provision / Pre-Tax Income | 15–30% | Income Statement | 5% |
+| 7 | Net Profit Margin | Net Income / Revenue | ≥ 20% | Income Statement | 11% |
+| 8 | EPS Growth (YoY) | EPS(N) / EPS(N-1) | > 1.0 | Income Statement | 10% |
+| 9 | Cash vs Current Debt | Cash / Current Debt | > 1.0 | Balance Sheet | 8% |
+| 10 | Adj. Debt-to-Equity | Total Debt / (Assets − Debt) | < 0.80 | Balance Sheet | 9% |
+| 11 | Preferred Stock | Balance sheet value | = $0 | Balance Sheet | 1% |
+| 12 | Retained Earnings Growth | RE(N) / RE(N-1) | > 1.0 | Balance Sheet | 9% |
+| 13 | Treasury Stock | Balance sheet value | Exists | Balance Sheet | 1% |
+| 14 | CapEx Margin | CapEx / Net Income | < 25% | Cash Flow | 8% |
 
----
-
-## Development Phases
-
-### Phase 1 — Backend Core
-**Goal:** Stable API that returns financial data and ratios for any ticker.
-
-- [x] **Step 1.1** — Project scaffold
-  - `requirements.txt`, `.env.example`, `config.py`
-  - FastAPI app with CORS, health check endpoint
-
-- [x] **Step 1.2** — Financial data service (`financial.py`)
-  - `get_financials(ticker)` → income statement, balance sheet, cash flow
-  - In-memory TTL cache (avoid repeated yfinance calls)
-  - Graceful handling of missing fields (not all stocks have all line items)
-
-- [x] **Step 1.3** — Buffett ratio engine (`buffett.py`)
-  - Implement all 11 ratio calculations
-  - Return structured `BuffettRatio` objects with pass/fail and description
-
-- [x] **Step 1.4** — Stock routes (`stock.py`)
-  - `GET /api/stock/{ticker}/financials`
-  - `GET /api/stock/{ticker}/ratios`
-  - 404 handling for invalid tickers
-
----
-
-### Phase 2 — RAG Chat Backend
-**Goal:** Working chatbot that answers investment questions using Buffett's principles.
-
-- [x] **Step 2.1** — Build knowledge base (`buffett_knowledge.txt`)
-  - Write ~30 document chunks covering all ratios + investment philosophy
-  - Include interpretation examples and Buffett quotes
-
-- [x] **Step 2.2** — RAG service (`rag.py`)
-  - Load and chunk documents with `RecursiveCharacterTextSplitter`
-  - Embed with `sentence-transformers/all-MiniLM-L6-v2`
-  - Build FAISS index on startup (saved to disk to avoid rebuild)
-  - `retrieve(query, k=3)` → top chunks
-
-- [x] **Step 2.3** — Chat route (`chat.py`)
-  - Accept `{ question, ticker, ratios }`
-  - Build prompt: system + RAG context + stock ratio context + user question
-  - Stream Groq response via `StreamingResponse` (SSE)
-
----
-
-### Phase 3 — Frontend
-**Goal:** Professional React UI connecting to the backend API.
-
-- [x] **Step 3.1** — Project scaffold
-  - `vite`, `react`, `typescript`, `tailwindcss`, `recharts`, `axios`
-  - Dark theme base layout
-
-- [x] **Step 3.2** — API client + types (`client.ts`, `types/index.ts`)
-  - TypeScript interfaces: `BuffettRatio`, `StockData`, `Message`
-  - Axios functions: `fetchRatios()`, `fetchFinancials()`
-
-- [x] **Step 3.3** — Stock Context + Header + Search
-  - `StockContext` with `ticker`, `ratios`, `statements`, `loading`
-  - `Header` with app branding
-  - `StockSearch` input triggers API fetch
-
-- [x] **Step 3.4** — Dashboard components
-  - `RatioTable`: table with PASS (green) / FAIL (red) / N/A badges
-  - `RatioChart`: Recharts bar chart, 4-year trend per ratio
-  - `StatementTable`: collapsible income / balance / cash flow tables
-
-- [x] **Step 3.5** — Chatbot component
-  - `ChatWindow`: message list + input box
-  - Streaming: `fetch()` → `ReadableStream` → append tokens in real time
-  - Auto-inject current stock ratios as context on send
-
----
-
-### Phase 4 — Polish & Portfolio Prep
-**Goal:** Production-quality finishing for GitHub/resume.
-
-- [x] **Step 4.1** — Error states
-  - Invalid ticker → user-facing error message
-  - API down → graceful fallback UI
-  - Missing financial fields → show "N/A" instead of crash
-
-- [x] **Step 4.2** — README.md
-  - Project description, demo screenshot, tech stack badges
-  - Setup instructions (backend + frontend)
-  - Architecture diagram
-
-- [x] **Step 4.3** — `.gitignore`, `.env.example`
-  - Never commit API keys
-  - Document all required environment variables
+**Weighted Score formula:**
+```
+score = Σ(weight_i for pass_i == True) / Σ(weight_i for pass_i != None) × 100
+```
+N/A metrics are excluded from both numerator and denominator (score normalized to scored metrics only).
 
 ---
 
 ## Environment Variables
 
 ```bash
-# backend/.env
+# backend/.env  (never commit — see .env.example)
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=llama-3.1-8b-instant
-FMP_API_KEY=your_fmp_api_key_here
 ```
 
-```
-# Groq free tier:  https://console.groq.com
-# FMP free tier:   https://financialmodelingprep.com/register  (250 req/day)
-```
+No other API keys required. yfinance fetches Yahoo Finance data without authentication.
 
 ---
 
 ## Local Development
 
 ```bash
-# Backend
+# Backend (Python 3.11)
 cd backend
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
+# API docs: http://localhost:8000/docs
 
 # Frontend
 cd frontend
 npm install
-npm run dev       # Vite dev server on http://localhost:5173
+npm run dev       # http://localhost:5173  (proxies /api → :8000)
 ```
 
 ---
 
-## Key Design Decisions & Rationale
+## Key Design Decisions
 
-| Decision | Alternative | Why This |
-|----------|------------|----------|
-| FastAPI over Flask | Flask | Async support, auto OpenAPI docs, Pydantic validation |
-| FAISS local over Pinecone | Pinecone/Weaviate | No external service, works offline, fine for <10k chunks |
-| Groq over OpenAI | OpenAI GPT-4 | Free tier, faster inference, LLaMA 3.1 quality sufficient |
-| SSE streaming over WebSocket | WebSocket | Simpler for one-way streaming, no ws library needed |
-| Context API over Zustand | Zustand/Redux | App state is simple (1 ticker, 1 chat), no need for extra lib |
-| Tailwind over MUI/Ant | Material UI | Faster custom styling, smaller bundle, looks more unique |
-| FMP over yfinance | yfinance | yfinance hit Yahoo Finance IP-level 429 rate limits in dev; FMP stable REST API with 250 free req/day |
-
----
-
-## Phase 5 — UI Redesign (Investment-Bank Theme)
-
-**Goal:** Replace the startup-green dark theme with a premium deep-navy × amber-gold palette, matching the aesthetic of Bloomberg Terminal / institutional finance tools.
-
-### Color Palette
-
-| Role | Old | New |
-|---|---|---|
-| Page background | `#0c1020` | `#070B14` deep navy-black |
-| Panel surface | `#141928` | `#0E1425` |
-| Card / inset | `#111624` | `#0A1020` |
-| Border | `#2a2f42` | `#1A2340` |
-| **Primary accent** | `#10b981` emerald | `#C9A44A` amber-gold |
-| PASS badge | green | gold |
-| FAIL badge | `#ef4444` | `#C84B4B` muted red |
-| Primary text | `#e5e7eb` | `#E8EBF4` cool white |
-| Secondary text | `#6b7280` | `#4E5F80` blue-grey |
-
-### Files to Update
-- `App.tsx` — background dot-grid color
-- `Header.tsx` — logo gradient, brand accent
-- `StockSearch.tsx` — button, focus ring, ticker badge
-- `Dashboard/index.tsx` — stock bar accent, active tab indicator
-- `RatioTable.tsx` — score ring, progress bars, PASS/FAIL badges
-- `RatioChart.tsx` — bar fill colors, threshold line color
-- `ChatWindow.tsx` — header, message bubbles, send button
-- `StatementTable.tsx` — section header colors
-
-### Status
-- [x] Apply new color palette across all components (deep-navy `#070B14` + amber-gold `#C9A44A`)
+| Decision | Alternative | Rationale |
+|----------|------------|-----------|
+| yfinance over FMP | FMP REST API | No API key needed; broader ticker coverage (HK, A-shares); FMP free tier limited to major US stocks only |
+| FAISS local over Pinecone | Pinecone / Weaviate | Zero external dependencies; works offline; adequate for <10k chunks |
+| Groq over OpenAI | OpenAI GPT-4o | Free tier; ~10× faster inference; LLaMA quality sufficient for structured financial output |
+| SSE over WebSocket | WebSocket | Simpler for one-directional streaming; no ws library needed on either side |
+| React Context over Zustand | Zustand / Redux | App state is single-ticker; adding Zustand would be premature optimization |
+| Tailwind + inline style | MUI / Ant Design | Full control over Apple HIG dark design without fighting component defaults |
+| lru_cache (current) | Redis / TTL cache | Acceptable for development; known limitation — see ROADMAP §0 Known Issues |
 
 ---
 
-## Phase 6 — Layout Redesign & Personal Tool Extensions
+## Known Issues & Technical Debt
 
-**Goal:** Evolve from a course project into a personal-use investment analysis tool with a professional layout and an AI advisor with a strong Buffett persona.
+See **ROADMAP.md → Phase 0: Technical Debt** for the full prioritized backlog. Summary:
 
-### Implemented Layout
-
-```
-┌────────────────────────────────────────────────────────────┐
-│  [B] BuffettAI    [════════ AAPL ════════ 🔍 Analyze ]     │
-├────────────────────────────────────────────────────────────┤
-│                                    │                        │
-│  ┌── Stock Overview ─────────────┐ │  ┌── AI Advisor ────┐ │
-│  │ Apple Inc.  AAPL  $189 ▲2.3% │ │  │  (Buffett voice) │ │
-│  │ Market Cap $2.9T  P/E 31.2   │ │  │                  │ │
-│  └───────────────────────────────┘ │  │  [chat messages] │ │
-│  [══════ Buffett Score 8/11 ═════] │  │                  │ │
-│  [Ratios ◎] [Chart ▦] [Data ≡]    │  │  [input bar]     │ │
-│                                    │  └──────────────────┘ │
-│  (dashboard content)               │                        │
-└────────────────────────────────────────────────────────────┘
-```
-
-### Feature Roadmap
-
-#### Priority 1 — Core Usability
-| Feature | Description | Effort | Status |
-|---|---|---|---|
-| **Stock Overview card** | Current price, market cap, P/E via FMP `/quote` | Low | ✅ Done |
-| **FMP quote endpoint** | `GET /api/stock/{ticker}/quote` | Low | ✅ Done |
-| **Buffett persona** | System prompt rewritten as first-person Buffett voice | Minimal | ⬜ Todo |
-| **Watchlist** | Persistent ticker list in header (localStorage); click to switch | Low | ⬜ Todo |
-| **Chat persistence** | Messages survive stock ticker changes; context accumulates | Low | ⬜ Todo |
-
-#### Priority 2 — Analytical Depth
-| Feature | Description | Effort | Status |
-|---|---|---|---|
-| **Ratio trend lines** | Line chart showing each ratio across 4 years | Low | ⬜ Todo |
-| **Auto investment thesis** | One-paragraph Buffett-style verdict from ratios | Low | ⬜ Todo |
-| **Multi-stock compare** | 2–3 tickers side-by-side Buffett score comparison | Medium | ⬜ Todo |
-
-### Remaining Backend Work
-- `rag.py` — upgrade system prompt to first-person Buffett persona with opinionated tone
-- `chat.py` + `rag.py` — accept `history: Message[]` for multi-turn conversation context
-
-### Remaining Frontend Work
-- `Header.tsx` — watchlist pill row (localStorage `watchlist[]`, click to search)
-- `ChatWindow.tsx` — pass message history array to backend; persist across ticker switches
-- New `InvestmentThesis.tsx` — auto-generated one-paragraph verdict below score ring
-- `RatioChart.tsx` — add trend line view (multi-year per ratio)
-
-### Status
-- [x] Apply new color palette (Phase 5)
-- [x] Stock Overview card + FMP quote endpoint
-- [ ] Upgrade Buffett persona prompt
-- [ ] Add Watchlist (localStorage)
-- [ ] Chat history persistence across ticker switches
-- [ ] Auto investment thesis card
-- [ ] Ratio trend line chart
+| Severity | Issue |
+|----------|-------|
+| P0 | `lru_cache` has no TTL — data never refreshes while server is running |
+| P0 | Chat is single-turn — no conversation history passed to LLM |
+| P0 | CORS origin hardcoded to `localhost:5173` — breaks on deployment |
+| P1 | LLM model `8b-instant` too small for deep financial reasoning |
+| P1 | AI Pick recommendation state lost on tab switch |
+| P1 | Prompt uses single `user` message — no system/user separation |
+| P1 | Ticker input not sanitized — prompt injection risk |
+| P2 | yfinance calls are synchronous — blocks FastAPI event loop under load |
+| P2 | Search clears stale data immediately — causes loading flash |
+| P2 | No React Error Boundary — component crash = blank page |
+| P3 | RAG uses small 384-dim embeddings with no re-ranking step |
+| P3 | Knowledge base is a single static file — no domain specialization |
