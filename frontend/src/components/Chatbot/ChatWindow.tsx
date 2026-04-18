@@ -9,7 +9,7 @@ const WELCOME: Message = {
     "Good day. I'm your Warren Buffett AI advisor. Search for a stock above, then ask me anything — financial health, investment thesis, ratio interpretation, or general Buffett principles.",
 }
 
-export default function ChatWindow() {
+export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolean }) {
   const [messages, setMessages] = useState<Message[]>([WELCOME])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -26,6 +26,11 @@ export default function ChatWindow() {
     if (!question || streaming) return
     setInput('')
 
+    // Build history from all completed messages (skip the welcome intro)
+    const history = messages
+      .filter(m => m !== WELCOME && !m.streaming && m.content)
+      .map(({ role, content }) => ({ role, content }))
+
     setMessages(prev => [
       ...prev,
       { role: 'user', content: question },
@@ -34,7 +39,7 @@ export default function ChatWindow() {
     setStreaming(true)
 
     try {
-      await streamChat(question, ticker, ratios,
+      await streamChat(question, ticker, ratios, history,
         token => {
           setMessages(prev => {
             const next = [...prev]
@@ -72,39 +77,41 @@ export default function ChatWindow() {
 
   return (
     <div
-      className="h-full flex flex-col rounded-2xl overflow-hidden"
-      style={{ background: '#242426', border: '1px solid rgba(255,255,255,0.08)' }}
+      className="h-full flex flex-col overflow-hidden"
+      style={{ background: 'transparent' }}
     >
-      {/* Header */}
-      <div
-        className="border-b px-4 py-3 flex items-center gap-2.5 flex-shrink-0"
-        style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(28,28,30,0.5)' }}
-      >
+      {/* Header — only shown when not inside ChatDrawer */}
+      {!hideHeader && (
         <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 text-white"
-          style={{ background: '#0A84FF', boxShadow: '0 2px 8px rgba(10,132,255,0.35)' }}
+          className="border-b px-4 py-3 flex items-center gap-2.5 flex-shrink-0"
+          style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(28,28,30,0.5)' }}
         >
-          AI
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold leading-none" style={{ color: '#F5F5F7' }}>AI Advisor</p>
-          <p className="text-[10px] mt-0.5" style={{ color: 'rgba(235,235,245,0.3)' }}>
-            Buffett Framework · RAG
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#30D158' }} />
-          <span className="text-[10px]" style={{ color: 'rgba(235,235,245,0.3)' }}>Live</span>
-        </div>
-        {ticker && (
-          <span
-            className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md"
-            style={{ color: '#0A84FF', background: 'rgba(10,132,255,0.12)', border: '1px solid rgba(10,132,255,0.2)' }}
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 text-white"
+            style={{ background: '#0A84FF', boxShadow: '0 2px 8px rgba(10,132,255,0.35)' }}
           >
-            {ticker}
-          </span>
-        )}
-      </div>
+            AI
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold leading-none" style={{ color: '#F5F5F7' }}>AI Advisor</p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'rgba(235,235,245,0.3)' }}>
+              Buffett Framework · RAG
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#30D158' }} />
+            <span className="text-[10px]" style={{ color: 'rgba(235,235,245,0.3)' }}>Live</span>
+          </div>
+          {ticker && (
+            <span
+              className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-md"
+              style={{ color: '#0A84FF', background: 'rgba(10,132,255,0.12)', border: '1px solid rgba(10,132,255,0.2)' }}
+            >
+              {ticker}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">

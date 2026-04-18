@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useStock } from '../../context/StockContext'
 import { streamRecommendation } from '../../api/client'
 
@@ -146,28 +146,33 @@ function RecommendationText({ text, streaming }: { text: string; streaming: bool
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function AIRecommendation() {
-  const { ticker, ratios, weightedScore, quote } = useStock()
-  const [text, setText]           = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [generated, setGenerated] = useState(false)
-  const [error, setError]         = useState<string | null>(null)
+  const { ticker, ratios, weightedScore, quote, recommendation, setRecommendation } = useStock()
+  const [error, setError] = useState<string | null>(null)
+  const accumulatedText = useRef('')
+
+  const { text, streaming } = recommendation
+  const generated = recommendation.ticker === ticker && (text !== '' || streaming)
 
   const generate = async () => {
     if (!ticker || !quote || streaming) return
-    setText('')
     setError(null)
-    setStreaming(true)
-    setGenerated(true)
+    accumulatedText.current = ''
+    setRecommendation({ text: '', ticker, streaming: true })
 
     try {
       await streamRecommendation(
         ticker, ratios, weightedScore, quote,
-        token => setText(prev => prev + token),
-        () => setStreaming(false),
+        token => {
+          accumulatedText.current += token
+          setRecommendation({ text: accumulatedText.current, ticker, streaming: true })
+        },
+        () => {
+          setRecommendation({ text: accumulatedText.current, ticker, streaming: false })
+        },
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to generate recommendation.')
-      setStreaming(false)
+      setRecommendation({ text: accumulatedText.current, ticker, streaming: false })
     }
   }
 

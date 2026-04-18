@@ -10,13 +10,14 @@ class ChatRequest(BaseModel):
     question: str
     ticker: str = ""
     ratios: list[dict] = []
+    history: list[dict] = []   # [{role: "user"|"assistant", content: str}, ...]
 
 
 @router.post("")
 def chat(request: ChatRequest):
-    """Stream an LLM response for a user question, with stock context injected."""
+    """Stream an LLM response with RAG context and full conversation history."""
     return StreamingResponse(
-        stream_chat(request.question, request.ticker, request.ratios),
+        stream_chat(request.question, request.ticker, request.ratios, request.history),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -4,7 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from groq import Groq
-from app.config import GROQ_API_KEY, GROQ_MODEL
+from app.config import GROQ_API_KEY, GROQ_MODEL, GROQ_RECOMMENDATION_MODEL
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _KB_PATH = _DATA_DIR / "buffett_knowledge.txt"
@@ -33,10 +33,7 @@ def _get_groq() -> Groq:
 
 
 def init_rag() -> None:
-    """
-    Build or load the FAISS vector index.
-    Called once at app startup via lifespan.
-    """
+    """Build or load the FAISS vector index. Called once at app startup."""
     global _vector_db
     embeddings = _get_embeddings()
 
@@ -63,13 +60,23 @@ def retrieve(query: str, k: int = 3) -> str:
     return "\n\n".join(d.page_content for d in docs)
 
 
-def _build_prompt(question: str, ticker: str, ratios: list[dict]) -> str:
+def _build_chat_system_message() -> str:
+    return (
+        "You are an expert investment analyst well-versed in Warren Buffett's investment philosophy. "
+        "Use the provided financial data and Buffett's principles to answer the user's questions. "
+        "Be specific, concise, and reference actual numbers when available. "
+        "Do not make direct buy/sell recommendations — provide objective analysis."
+    )
+
+
+def _build_chat_user_message(question: str, ticker: str, ratios: list[dict]) -> str:
     rag_context = retrieve(question)
 
     ratio_lines = []
     for r in ratios:
-        if r.get("value") is not None:
-            val_str = f"{r['value'] * 100:.1f}%"
+        val = r.get("value")
+        if val is not None:
+            val_str = f"{val * 100:.1f}%"
         else:
             val_str = "N/A"
         status = "PASS" if r.get("passes") is True else ("FAIL" if r.get("passes") is False else "N/A")
@@ -82,10 +89,6 @@ def _build_prompt(question: str, ticker: str, ratios: list[dict]) -> str:
     )
 
     return (
-        "You are an expert investment analyst well-versed in Warren Buffett's investment philosophy.\n"
-        "Use the provided financial data and Buffett's principles to answer the user's question.\n"
-        "Be specific, concise, and reference actual numbers when available.\n"
-        "Do not make direct buy/sell recommendations — provide objective analysis.\n\n"
         "─── BUFFETT KNOWLEDGE BASE ───\n"
         f"{rag_context}\n\n"
         "─── CURRENT STOCK DATA ───\n"
@@ -100,14 +103,13 @@ def _build_recommendation_prompt(
     ratios: list[dict],
     weighted_score: float,
     quote: dict,
-) -> str:
-    # RAG: pull both Buffett principles AND sector-relevant context
+) -> tuple[str, str]:
+    """Returns (system_message, user_message)."""
     sector   = quote.get("sector", "")
     industry = quote.get("industry", "")
     rag_query = f"Warren Buffett {sector} {industry} competitive advantage moat valuation"
     rag_context = retrieve(rag_query, k=4)
 
-    # ── Helper formatters ──
     def pct(v):
         return f"{v*100:.1f}%" if v is not None else "N/A"
     def money(n):
@@ -123,7 +125,6 @@ def _build_recommendation_prompt(
     mktcap  = quote.get("marketCap")
     summary = quote.get("summary", "")
 
-    # ── Company snapshot ──
     snapshot = (
         f"COMPANY: {name} ({ticker.upper()})\n"
         f"Sector: {sector or 'N/A'}  |  Industry: {industry or 'N/A'}\n"
@@ -140,13 +141,11 @@ def _build_recommendation_prompt(
     if summary:
         snapshot += f"Business: {summary}\n"
 
-    # ── Buffett weighted score ──
     score_line = (
         f"\nBUFFETT WEIGHTED SCORE: {weighted_score:.1f}/100  "
         f"({'Strong moat zone' if weighted_score >= 70 else 'Watch zone' if weighted_score >= 55 else 'Avoid zone'})\n"
     )
 
-    # ── Metrics by category with value + status + weight ──
     by_cat: dict[str, list[str]] = {}
     for r in ratios:
         cat    = r.get("category", "Other")
@@ -165,14 +164,16 @@ def _build_recommendation_prompt(
     for cat, lines in by_cat.items():
         metrics_block += f"\n{cat}:\n" + "\n".join(lines) + "\n"
 
-    # ── Full prompt ──
-    return (
+    system_msg = (
         "You are a senior equity analyst at a value-focused investment firm. "
         "You combine Warren Buffett's timeless principles — durable competitive advantage, "
         "honest management, predictable earnings, sensible price — with modern metrics "
-        "like ROIC, FCF yield, and PEG ratio.\n\n"
+        "like ROIC, FCF yield, and PEG ratio. "
         "Your analysis must be concrete, data-driven, and sector-aware. "
-        "Avoid generic statements. Every claim must be backed by a specific number from the data below.\n\n"
+        "Avoid generic statements. Every claim must be backed by a specific number from the data provided."
+    )
+
+    user_msg = (
         "─── BUFFETT PRINCIPLES (RAG) ───\n"
         f"{rag_context}\n\n"
         "─── STOCK SNAPSHOT ───\n"
@@ -195,6 +196,8 @@ def _build_recommendation_prompt(
         "Total length: 300–400 words. Tone: decisive, analytical, institutional."
     )
 
+    return system_msg, user_msg
+
 
 def stream_recommendation(
     ticker: str,
@@ -205,11 +208,14 @@ def stream_recommendation(
     """Stream an AI investment recommendation as SSE tokens."""
     try:
         client = _get_groq()
-        prompt = _build_recommendation_prompt(ticker, ratios, weighted_score, quote)
+        system_msg, user_msg = _build_recommendation_prompt(ticker, ratios, weighted_score, quote)
 
         stream = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            model=GROQ_RECOMMENDATION_MODEL,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_msg},
+            ],
             stream=True,
             max_tokens=800,
             temperature=0.6,
@@ -229,19 +235,30 @@ def stream_recommendation(
         yield "data: [DONE]\n\n"
 
 
-def stream_chat(question: str, ticker: str, ratios: list[dict]) -> Iterator[str]:
+def stream_chat(
+    question: str,
+    ticker: str,
+    ratios: list[dict],
+    history: list[dict] | None = None,
+) -> Iterator[str]:
     """
-    Yields SSE-formatted tokens from the Groq LLM.
-    Each yield is in the form: 'data: <token>\\n\\n'
-    Ends with: 'data: [DONE]\\n\\n'
+    Stream an LLM response with full conversation history.
+    history: list of {role, content} dicts from previous turns (excluding the current question).
+    Yields SSE tokens ending with 'data: [DONE]\\n\\n'.
     """
     try:
         client = _get_groq()
-        prompt = _build_prompt(question, ticker, ratios)
+        system_content = _build_chat_system_message()
+        user_content   = _build_chat_user_message(question, ticker, ratios)
+
+        messages: list[dict] = [{"role": "system", "content": system_content}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_content})
 
         stream = client.chat.completions.create(
             model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             stream=True,
             max_tokens=1024,
             temperature=0.7,

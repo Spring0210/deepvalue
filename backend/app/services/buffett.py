@@ -240,7 +240,8 @@ def compute_ratios(data: dict) -> list[BuffettRatio]:
         category="Cash Flow", weight=0.08,
     ))
 
-    # Verify weights sum to ~1.0
-    assert abs(sum(r.weight for r in ratios) - 1.0) < 0.001, "Weights must sum to 1.0"
+    total_weight = sum(r.weight for r in ratios)
+    if abs(total_weight - 1.0) >= 0.001:
+        raise ValueError(f"Buffett ratio weights must sum to 1.0, got {total_weight:.4f}")
 
     return ratios

@@ -22,53 +22,42 @@
 
 ### P0 — Critical (breaks correctness or security)
 
-- [ ] **`lru_cache` has no TTL** (`financial.py`)
-  — Data never refreshes while the server is running. A stock searched at startup stays cached forever.
-  — Fix: replace with a TTL cache (e.g. `cachetools.TTLCache`, 15-min expiry) or `functools.lru_cache` + timestamp invalidation.
+- [x] **`lru_cache` has no TTL** (`financial.py`)
+  — Replaced with `cachetools.TTLCache(maxsize=64, ttl=900)` (15-min expiry). Stale data now auto-evicts.
 
-- [ ] **Chat is single-turn — no conversation history** (`rag.py` / `ChatWindow.tsx`)
-  — Every message is sent as a fresh, standalone prompt. The AI has no memory of previous turns in the same session.
-  — Fix: maintain a `messages: list[dict]` array in `ChatWindow`, pass it to `POST /api/chat`, and build a proper multi-turn message list for Groq (`[{role: system}, {role: user}, {role: assistant}, ...]`).
+- [x] **Chat is single-turn — no conversation history** (`rag.py` / `ChatWindow.tsx`)
+  — `ChatWindow` now captures completed messages as `history` before each send. `POST /api/chat` accepts `history: list[dict]`. `rag.py` builds a proper `[system, ...history, user]` message list for Groq.
 
-- [ ] **CORS origin hardcoded to `localhost:5173`** (`main.py`)
-  — Will reject all requests when deployed to any non-localhost environment.
-  — Fix: read allowed origins from an env var (`ALLOWED_ORIGINS`), fall back to localhost in dev.
+- [x] **CORS origin hardcoded to `localhost:5173`** (`main.py`)
+  — Reads `ALLOWED_ORIGINS` env var (comma-separated). Falls back to `http://localhost:5173` if unset.
 
 ### P1 — High (degrades quality or creates risk)
 
-- [ ] **LLM model too small for financial reasoning** (`rag.py`)
-  — `llama-3.1-8b-instant` is optimized for speed, not depth. Produces shallow or generic financial analysis.
-  — Fix: use `llama-3.3-70b-versatile` for `stream_recommendation()` where quality matters; keep 8B for fast chat.
+- [x] **LLM model too small for financial reasoning** (`rag.py`)
+  — `stream_recommendation()` now uses `GROQ_RECOMMENDATION_MODEL` (default `llama-3.3-70b-versatile`). Chat keeps 8B for speed.
 
-- [ ] **AI Pick recommendation lost on tab switch** (`AIRecommendation.tsx`)
-  — Generated text is stored in component-local `useState`. Switching tabs destroys it.
-  — Fix: lift `recommendationText` and `recommendationTicker` into `StockContext`.
+- [x] **AI Pick recommendation lost on tab switch** (`AIRecommendation.tsx`)
+  — `recommendation: {text, ticker, streaming}` lifted into `StockContext`. Tab switches no longer destroy it.
 
-- [ ] **Prompt uses single `user` message — no system/user separation** (`rag.py`)
-  — Role definition, RAG context, stock data, and user question are all one `user` blob. LLMs follow system-message persona more reliably.
-  — Fix: split into `[{role: "system", content: persona}, {role: "user", content: rag + data + question}]`.
+- [x] **Prompt uses single `user` message — no system/user separation** (`rag.py`)
+  — All prompts now split into `[{role: "system", content: persona}, {role: "user", content: data+question}]`.
 
-- [ ] **Ticker input not sanitized — prompt injection risk** (`stock.py` / `rag.py`)
-  — A malformed ticker like `AAPL\n\nIgnore all above instructions` passes directly into prompt strings.
-  — Fix: validate ticker with regex `^[A-Z0-9.\-]{1,10}$` in the route handler before any processing.
+- [x] **Ticker input not sanitized — prompt injection risk** (`stock.py`)
+  — All route handlers call `_validate_ticker()` which enforces `^[A-Z0-9.\-]{1,10}$` before processing.
 
-- [ ] **`assert` used for weight validation in production code** (`buffett.py`)
-  — Python's `-O` flag strips `assert` statements. A weight miscalculation would silently produce wrong scores.
-  — Fix: replace with `if not ...: raise ValueError(...)`.
+- [x] **`assert` used for weight validation in production code** (`buffett.py`)
+  — Replaced with explicit `if not ...: raise ValueError(...)`.
 
 ### P2 — Medium (performance / UX)
 
-- [ ] **yfinance calls are synchronous — blocks FastAPI event loop** (`financial.py`)
-  — Under concurrent requests, all API calls queue behind each other on the single event loop thread.
-  — Fix: wrap yfinance calls with `await asyncio.to_thread(...)` and make route handlers `async def`.
+- [x] **yfinance calls are synchronous — blocks FastAPI event loop** (`financial.py`)
+  — `get_stock_quote` / `get_stock_data` are now `async` and wrap sync fetchers with `asyncio.to_thread`. All stock route handlers are `async def`.
 
-- [ ] **Search clears stale data immediately** (`StockContext.tsx`)
-  — `setRatios([])` / `setFinancials(null)` fires before new data arrives, causing a full-screen loading flash.
-  — Fix: keep previous data visible while loading new data; only replace on success (stale-while-revalidate pattern).
+- [x] **Search clears stale data immediately** (`StockContext.tsx`)
+  — Removed pre-search `setRatios([])` / `setFinancials(null)`. Previous data stays visible until new data arrives (stale-while-revalidate). Error no longer clears data either.
 
-- [ ] **No React Error Boundary**
-  — Any unhandled component exception (e.g. malformed API response) renders a blank white page.
-  — Fix: wrap `<Dashboard>` and `<ChatWindow>` in an `<ErrorBoundary>` that shows a graceful fallback UI.
+- [x] **No React Error Boundary**
+  — `ErrorBoundary.tsx` added. `<Dashboard>` and `<ChatWindow>` both wrapped in `App.tsx`.
 
 ### P3 — Low (quality improvements)
 

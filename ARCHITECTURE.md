@@ -310,15 +310,16 @@ See **ROADMAP.md → Phase 0: Technical Debt** for the full prioritized backlog.
 
 | Severity | Issue |
 |----------|-------|
-| P0 | `lru_cache` has no TTL — data never refreshes while server is running |
-| P0 | Chat is single-turn — no conversation history passed to LLM |
-| P0 | CORS origin hardcoded to `localhost:5173` — breaks on deployment |
-| P1 | LLM model `8b-instant` too small for deep financial reasoning |
-| P1 | AI Pick recommendation state lost on tab switch |
-| P1 | Prompt uses single `user` message — no system/user separation |
-| P1 | Ticker input not sanitized — prompt injection risk |
-| P2 | yfinance calls are synchronous — blocks FastAPI event loop under load |
-| P2 | Search clears stale data immediately — causes loading flash |
-| P2 | No React Error Boundary — component crash = blank page |
+| ✅ P0 | ~~`lru_cache` has no TTL~~ — replaced with `cachetools.TTLCache` (15-min expiry) |
+| ✅ P0 | ~~Chat is single-turn~~ — full conversation history passed via `history` field |
+| ✅ P0 | ~~CORS hardcoded~~ — reads `ALLOWED_ORIGINS` env var |
+| ✅ P1 | ~~8b-instant for recommendations~~ — `llama-3.3-70b-versatile` via `GROQ_RECOMMENDATION_MODEL` |
+| ✅ P1 | ~~AI Pick state lost on tab switch~~ — recommendation lifted into `StockContext` |
+| ✅ P1 | ~~Single user message prompt~~ — proper system/user message split |
+| ✅ P1 | ~~Ticker not sanitized~~ — `^[A-Z0-9.\-]{1,10}$` regex in route handlers |
+| ✅ P1 | ~~`assert` in production code~~ — replaced with `raise ValueError` |
+| ✅ P2 | ~~yfinance blocks event loop~~ — `asyncio.to_thread` + async routes |
+| ✅ P2 | ~~Search clears stale data~~ — stale-while-revalidate pattern in `StockContext` |
+| ✅ P2 | ~~No React Error Boundary~~ — `ErrorBoundary` wraps Dashboard and ChatWindow |
 | P3 | RAG uses small 384-dim embeddings with no re-ranking step |
 | P3 | Knowledge base is a single static file — no domain specialization |

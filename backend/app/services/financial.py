@@ -1,8 +1,17 @@
-from functools import lru_cache
+import asyncio
+from threading import Lock
 from typing import Optional
 
 import pandas as pd
 import yfinance as yf
+from cachetools import TTLCache, cached
+
+_QUOTE_CACHE:   TTLCache = TTLCache(maxsize=64,  ttl=900)   # 15-minute TTL
+_DATA_CACHE:    TTLCache = TTLCache(maxsize=64,  ttl=900)
+_HISTORY_CACHE: TTLCache = TTLCache(maxsize=128, ttl=1800)  # 30-minute TTL
+_QUOTE_LOCK   = Lock()
+_DATA_LOCK    = Lock()
+_HISTORY_LOCK = Lock()
 
 
 def _df_to_dict(df: pd.DataFrame) -> dict:
@@ -17,8 +26,8 @@ def _df_to_dict(df: pd.DataFrame) -> dict:
     return result
 
 
-@lru_cache(maxsize=64)
-def get_stock_quote(ticker: str) -> dict:
+@cached(cache=_QUOTE_CACHE, lock=_QUOTE_LOCK)
+def _fetch_quote_sync(ticker: str) -> dict:
     t = yf.Ticker(ticker)
     info = t.info
 
@@ -34,7 +43,6 @@ def get_stock_quote(ticker: str) -> dict:
     fcf        = info.get("freeCashflow")
     fcf_yield  = (fcf / market_cap) if (fcf and market_cap) else None
 
-    # Trim business summary to ~300 chars for prompt use
     summary = info.get("longBusinessSummary", "")
     if len(summary) > 300:
         summary = summary[:297] + "…"
@@ -47,7 +55,6 @@ def get_stock_quote(ticker: str) -> dict:
         "marketCap":         market_cap,
         "pe":                info.get("trailingPE"),
         "exchange":          info.get("exchange", ""),
-        # Extended fields
         "sector":            info.get("sector", ""),
         "industry":          info.get("industry", ""),
         "summary":           summary,
@@ -58,21 +65,36 @@ def get_stock_quote(ticker: str) -> dict:
         "revenueGrowth":     info.get("revenueGrowth"),
         "earningsGrowth":    info.get("earningsGrowth"),
         "fcfYield":          fcf_yield,
+        "freeCashflow":      fcf,
         "dividendYield":     info.get("dividendYield"),
         "grossMargins":      info.get("grossMargins"),
         "operatingMargins":  info.get("operatingMargins"),
         "evToEbitda":        info.get("enterpriseToEbitda"),
+        # 52-week range + analyst consensus
+        "fiftyTwoWeekHigh":        info.get("fiftyTwoWeekHigh"),
+        "fiftyTwoWeekLow":         info.get("fiftyTwoWeekLow"),
+        "targetLowPrice":          info.get("targetLowPrice"),
+        "targetMeanPrice":         info.get("targetMeanPrice"),
+        "targetMedianPrice":       info.get("targetMedianPrice"),
+        "targetHighPrice":         info.get("targetHighPrice"),
+        "recommendationKey":       info.get("recommendationKey"),
+        "numberOfAnalystOpinions": info.get("numberOfAnalystOpinions"),
+        "heldPercentInsiders":     info.get("heldPercentInsiders"),
+        # Valuation inputs
+        "trailingEps":             info.get("trailingEps"),
+        "bookValue":               info.get("bookValue"),
+        "sharesOutstanding":       info.get("sharesOutstanding"),
     }
 
 
-@lru_cache(maxsize=64)
-def get_stock_data(ticker: str) -> dict:
+@cached(cache=_DATA_CACHE, lock=_DATA_LOCK)
+def _fetch_data_sync(ticker: str) -> dict:
     t = yf.Ticker(ticker)
 
     try:
-        income   = t.financials    # annual income statement
-        balance  = t.balance_sheet # annual balance sheet
-        cashflow = t.cashflow      # annual cash flow
+        income   = t.financials
+        balance  = t.balance_sheet
+        cashflow = t.cashflow
     except Exception as exc:
         raise ValueError(f"Failed to fetch data for '{ticker}': {exc}") from exc
 
@@ -87,6 +109,39 @@ def get_stock_data(ticker: str) -> dict:
         "balanceSheet": _df_to_dict(balance),
         "cashflow":     _df_to_dict(cashflow),
     }
+
+
+@cached(cache=_HISTORY_CACHE, lock=_HISTORY_LOCK)
+def _fetch_history_sync(ticker: str, period: str, interval: str) -> dict:
+    t = yf.Ticker(ticker)
+    hist = t.history(period=period, interval=interval)
+    if hist.empty:
+        return {"dates": [], "prices": [], "volumes": [], "is_intraday": False}
+    is_intraday = interval in ("1m", "2m", "5m", "15m", "30m", "1h")
+    dates = []
+    for idx in hist.index:
+        if is_intraday:
+            dates.append(idx.strftime("%Y-%m-%d %H:%M"))
+        else:
+            dates.append(str(idx.date()))
+    return {
+        "dates":       dates,
+        "prices":      [round(float(p), 2) for p in hist["Close"].tolist()],
+        "volumes":     [int(v) for v in hist["Volume"].tolist()],
+        "is_intraday": is_intraday,
+    }
+
+
+async def get_stock_quote(ticker: str) -> dict:
+    return await asyncio.to_thread(_fetch_quote_sync, ticker)
+
+
+async def get_stock_data(ticker: str) -> dict:
+    return await asyncio.to_thread(_fetch_data_sync, ticker)
+
+
+async def get_price_history(ticker: str, period: str = "1y", interval: str = "1d") -> dict:
+    return await asyncio.to_thread(_fetch_history_sync, ticker, period, interval)
 
 
 def safe_get(statement: dict, column: str, row: str) -> Optional[float]:

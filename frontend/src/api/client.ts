@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { BuffettRatio, StockFinancials, StockQuote } from '../types'
+import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, PriceHistory } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -20,17 +20,28 @@ export async function fetchFinancials(ticker: string): Promise<StockFinancials> 
   return data
 }
 
+export async function fetchValuation(ticker: string): Promise<StockValuation> {
+  const { data } = await api.get(`/stock/${ticker}/valuation`)
+  return data
+}
+
+export async function fetchHistory(ticker: string, period: string): Promise<PriceHistory> {
+  const { data } = await api.get(`/stock/${ticker}/history`, { params: { period } })
+  return data
+}
+
 export async function streamChat(
   question: string,
   ticker: string,
   ratios: BuffettRatio[],
+  history: Array<{ role: string; content: string }>,
   onToken: (token: string) => void,
   onDone: () => void,
 ): Promise<void> {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, ticker, ratios }),
+    body: JSON.stringify({ question, ticker, ratios, history }),
   })
   if (!response.ok) throw new Error(`Server error: ${response.status}`)
   await _readSSE(response, onToken, onDone)
