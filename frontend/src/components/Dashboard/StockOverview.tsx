@@ -1,4 +1,4 @@
-import type { StockQuote } from '../../types'
+import type { StockQuote, MoatResult } from '../../types'
 
 function fmt(n: number | null | undefined, decimals = 2): string {
   if (n === null || n === undefined) return '—'
@@ -16,7 +16,13 @@ function fmtCap(n: number | null | undefined): string {
   return `$${n.toLocaleString()}`
 }
 
-interface Props { ticker: string; quote: StockQuote }
+const MOAT_BADGE: Record<string, { color: string; bg: string }> = {
+  Wide:   { color: '#30D158', bg: 'rgba(48,209,88,0.12)' },
+  Narrow: { color: '#FF9F0A', bg: 'rgba(255,159,10,0.12)' },
+  None:   { color: '#FF453A', bg: 'rgba(255,69,58,0.10)' },
+}
+
+interface Props { ticker: string; quote: StockQuote; moat?: MoatResult | null }
 
 function Stat({ label, value, highlight, color }: {
   label: string; value: string; highlight?: boolean; color?: string
@@ -210,7 +216,7 @@ function TargetRangeBar({ price, low, mean, median, high, analysts }: {
   )
 }
 
-export default function StockOverview({ ticker, quote }: Props) {
+export default function StockOverview({ ticker, quote, moat }: Props) {
   const isUp = (quote.changesPercentage ?? 0) >= 0
   const changeColor = isUp ? '#30D158' : '#FF453A'
 
@@ -223,12 +229,23 @@ export default function StockOverview({ ticker, quote }: Props) {
           <p className="font-semibold text-[15px] truncate" style={{ color: '#F5F5F7' }}>
             {quote.name}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: 'rgba(235,235,245,0.35)' }}>
-            <span className="font-mono">{ticker}</span>
-            {quote.exchange ? ` · ${quote.exchange}` : ''}
-            {quote.sector ? ` · ${quote.sector}` : ''}
-            {quote.industry ? ` — ${quote.industry}` : ''}
-          </p>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p className="text-xs" style={{ color: 'rgba(235,235,245,0.35)' }}>
+              <span className="font-mono">{ticker}</span>
+              {quote.exchange ? ` · ${quote.exchange}` : ''}
+              {quote.sector ? ` · ${quote.sector}` : ''}
+              {quote.industry ? ` — ${quote.industry}` : ''}
+            </p>
+            {moat && moat.strength && (() => {
+              const badge = MOAT_BADGE[moat.strength]
+              return (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md"
+                  style={{ background: badge.bg, color: badge.color }}>
+                  {moat.strength} Moat{moat.primary_type ? ` · ${moat.primary_type}` : ''}
+                </span>
+              )
+            })()}
+          </div>
         </div>
 
         <div className="text-right">

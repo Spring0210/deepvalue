@@ -7,6 +7,7 @@ from app.services.financial import get_stock_data, get_stock_quote, get_price_hi
 from app.services.buffett import compute_ratios, compute_weighted_score
 from app.services.rag import stream_recommendation
 from app.services.valuation import compute_valuation
+from app.services.moat import compute_moat
 
 router = APIRouter()
 
@@ -82,6 +83,16 @@ async def get_valuation(ticker: str):
     try:
         quote = await get_stock_quote(ticker)
         return compute_valuation(quote)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{ticker}/moat")
+async def get_moat(ticker: str):
+    ticker = _validate_ticker(ticker)
+    try:
+        quote = await get_stock_quote(ticker)
+        return compute_moat(quote)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

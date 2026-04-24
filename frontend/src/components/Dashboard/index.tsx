@@ -29,7 +29,7 @@ function SectionHeader({ section }: { section: Section }) {
 interface Props { section: Section }
 
 export default function Dashboard({ section }: Props) {
-  const { ticker, quote, ratios, weightedScore, financials, loading, error } = useStock()
+  const { ticker, quote, ratios, weightedScore, financials, moat, loading, error } = useStock()
 
   // Full-screen loader only on first search (no data yet)
   if (loading && !ticker) {
@@ -97,7 +97,7 @@ export default function Dashboard({ section }: Props) {
       {/* Stock overview — always visible across all sections */}
       {quote && (
         <div style={{ position: 'relative' }}>
-          <StockOverview ticker={ticker} quote={quote} />
+          <StockOverview ticker={ticker} quote={quote} moat={moat} />
           {/* Subtle re-fetching indicator */}
           {loading && (
             <div className="absolute top-3 right-3">

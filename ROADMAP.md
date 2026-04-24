@@ -86,8 +86,8 @@
 - [x] PEG Ratio, Forward P/E
 - [x] FCF Yield (Free Cash Flow / Market Cap)
 - [x] Dividend Yield & Payout Ratio
-- [ ] EV/EBITDA (enterprise value multiple)
-- [ ] Insider ownership percentage
+- [x] EV/EBITDA (enterprise value multiple)
+- [x] Insider ownership percentage
 
 ### 1.2 AI Recommendation Quality
 - [x] Company business summary in prompt context
@@ -105,8 +105,8 @@
 ### 1.4 StockOverview Panel
 - [x] Sector & Industry display
 - [x] ROE, Forward P/E, FCF Yield display
-- [ ] 52-week high/low bar
-- [ ] Analyst consensus (from yfinance `.info`)
+- [x] 52-week high/low bar
+- [x] Analyst consensus (from yfinance `.info`)
 
 ---
 
@@ -115,14 +115,14 @@
 **Goal:** Give users a concrete estimate of intrinsic value and margin of safety.
 
 ### 2.1 Intrinsic Value Models
-- [ ] **DCF Calculator** — 10-year discounted cash flow with user-adjustable growth rate and discount rate
-- [ ] **Graham Number** — √(22.5 × EPS × BVPS) — classic Ben Graham formula
+- [x] **DCF Calculator** — 10-year discounted cash flow with user-adjustable growth rate and discount rate
+- [x] **Graham Number** — √(22.5 × EPS × BVPS) — classic Ben Graham formula
 - [ ] **FCF Yield Valuation** — fair value based on normalized FCF yield vs 10Y Treasury
 - [ ] **Earnings Power Value (EPV)** — Bruce Greenwald's no-growth DCF variant
 
 ### 2.2 Margin of Safety
-- [ ] Display current price vs estimated intrinsic value range
-- [ ] Visual margin-of-safety gauge (price vs value)
+- [x] Display current price vs estimated intrinsic value range
+- [x] Visual margin-of-safety gauge (price vs value)
 - [ ] "Buffett Circle of Competence" check — flag highly complex businesses
 
 ### 2.3 Modern Valuation Metrics
@@ -166,13 +166,13 @@
 - [ ] **Insider Ownership** threshold check (Buffett prefers owner-operators)
 
 ### 4.2 Competitive Moat Classification
-- [ ] Auto-classify moat type based on metrics:
+- [x] Auto-classify moat type based on metrics:
   - Network Effect (platform companies, high gross margin)
   - Switching Costs (high retention, recurring revenue)
   - Cost Advantage (low CapEx, economies of scale)
   - Intangible Assets (brand, patents — high gross margin + low R&D need)
   - Efficient Scale (regulated monopolies, utilities)
-- [ ] Moat strength rating: Wide / Narrow / None
+- [x] Moat strength rating: Wide / Narrow / None
 
 ### 4.3 Industry-Aware Scoring
 - [ ] Sector-specific metric weights (tech vs consumer vs financials vs utilities)
@@ -248,4 +248,4 @@
 
 ---
 
-*Last updated: 2026-04-17 · v0.2*
+*Last updated: 2026-04-17 · v0.3*

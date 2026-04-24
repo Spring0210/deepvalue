@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useStock } from '../../context/StockContext'
+import MoatCard from './MoatCard'
 
 // ── DCF math (mirrors backend, runs on frontend for live slider updates) ────
 function calcDCF(
@@ -170,6 +171,9 @@ export default function ValuationPanel() {
 
   return (
     <div className="space-y-4">
+
+      {/* Competitive Moat */}
+      <MoatCard />
 
       {/* Margin of Safety summary */}
       <Card title="Margin of Safety">

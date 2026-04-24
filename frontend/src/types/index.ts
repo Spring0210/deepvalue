@@ -76,6 +76,13 @@ export interface PriceHistory {
   volumes: number[]
 }
 
+export interface MoatResult {
+  strength: 'Wide' | 'Narrow' | 'None'
+  primary_type: string | null
+  scores: Record<string, number>
+  indicators: string[]
+}
+
 export type Section = 'ratios' | 'chart' | 'valuation' | 'statements' | 'ai'
 
 export interface Message {

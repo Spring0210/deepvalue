@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, PriceHistory } from '../types'
+import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult, PriceHistory } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -22,6 +22,11 @@ export async function fetchFinancials(ticker: string): Promise<StockFinancials> 
 
 export async function fetchValuation(ticker: string): Promise<StockValuation> {
   const { data } = await api.get(`/stock/${ticker}/valuation`)
+  return data
+}
+
+export async function fetchMoat(ticker: string): Promise<MoatResult> {
+  const { data } = await api.get(`/stock/${ticker}/moat`)
   return data
 }
 

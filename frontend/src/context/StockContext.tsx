@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
-import type { BuffettRatio, StockFinancials, StockQuote, StockValuation } from '../types'
-import { fetchRatios, fetchFinancials, fetchQuote, fetchValuation } from '../api/client'
+import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult } from '../types'
+import { fetchRatios, fetchFinancials, fetchQuote, fetchValuation, fetchMoat } from '../api/client'
 
 interface Recommendation {
   text: string
@@ -15,6 +15,7 @@ interface StockContextType {
   weightedScore: number
   financials: StockFinancials | null
   valuation: StockValuation | null
+  moat: MoatResult | null
   loading: boolean
   error: string | null
   recommendation: Recommendation
@@ -33,6 +34,7 @@ export function StockProvider({ children }: { children: ReactNode }) {
   const [weightedScore, setWeightedScore] = useState(0)
   const [financials, setFinancials]       = useState<StockFinancials | null>(null)
   const [valuation, setValuation]         = useState<StockValuation | null>(null)
+  const [moat, setMoat]                   = useState<MoatResult | null>(null)
   const [loading, setLoading]             = useState(false)
   const [error, setError]                 = useState<string | null>(null)
   const [recommendation, setRecommendation] = useState<Recommendation>(EMPTY_RECOMMENDATION)
@@ -41,11 +43,12 @@ export function StockProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     setError(null)
     try {
-      const [ratioData, finData, quoteData, valuationData] = await Promise.all([
+      const [ratioData, finData, quoteData, valuationData, moatData] = await Promise.all([
         fetchRatios(newTicker),
         fetchFinancials(newTicker),
         fetchQuote(newTicker),
         fetchValuation(newTicker),
+        fetchMoat(newTicker),
       ])
       setTicker(ratioData.ticker)
       setRatios(ratioData.ratios)
@@ -53,6 +56,7 @@ export function StockProvider({ children }: { children: ReactNode }) {
       setFinancials(finData)
       setQuote(quoteData)
       setValuation(valuationData)
+      setMoat(moatData)
       setRecommendation(EMPTY_RECOMMENDATION)
     } catch (e) {
       const msg = (e instanceof Error && e.message) ? e.message : 'Failed to fetch stock data.'
@@ -64,7 +68,7 @@ export function StockProvider({ children }: { children: ReactNode }) {
 
   return (
     <StockContext.Provider value={{
-      ticker, quote, ratios, weightedScore, financials, valuation,
+      ticker, quote, ratios, weightedScore, financials, valuation, moat,
       loading, error, recommendation, setRecommendation, search,
     }}>
       {children}
