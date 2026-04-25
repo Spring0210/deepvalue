@@ -84,6 +84,8 @@ def _fetch_quote_sync(ticker: str) -> dict:
         "trailingEps":             info.get("trailingEps"),
         "bookValue":               info.get("bookValue"),
         "sharesOutstanding":       info.get("sharesOutstanding"),
+        # Currency
+        "currency":                info.get("currency", "USD"),
     }
 
 

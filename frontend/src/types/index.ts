@@ -53,6 +53,8 @@ export interface StockQuote {
   trailingEps?: number | null
   bookValue?: number | null
   sharesOutstanding?: number | null
+  // Currency
+  currency?: string | null
 }
 
 export interface StockValuation {

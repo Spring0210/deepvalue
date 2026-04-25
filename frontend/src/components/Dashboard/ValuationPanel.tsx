@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useStock } from '../../context/StockContext'
 import MoatCard from './MoatCard'
+import { getCurrencySymbol } from '../../utils/currency'
 
 // ── DCF math (mirrors backend, runs on frontend for live slider updates) ────
 function calcDCF(
@@ -49,8 +50,8 @@ function MoSGauge({ value, label }: { value: number | null; label: string }) {
 }
 
 // ── Price vs Value bar ───────────────────────────────────────────────────────
-function PriceBar({ price, iv, label, color }: {
-  price: number | null; iv: number | null; label: string; color: string
+function PriceBar({ price, iv, label, color, sym }: {
+  price: number | null; iv: number | null; label: string; color: string; sym: string
 }) {
   if (!price || !iv) return null
   const max = Math.max(price, iv) * 1.15
@@ -63,7 +64,7 @@ function PriceBar({ price, iv, label, color }: {
       <div className="flex justify-between text-[10px] mb-1.5" style={{ color: 'rgba(235,235,245,0.35)' }}>
         <span className="uppercase tracking-wider">{label}</span>
         <span className="font-mono" style={{ color }}>
-          ${iv.toFixed(2)} intrinsic · ${price.toFixed(2)} price
+          {sym}{iv.toFixed(2)} intrinsic · {sym}{price.toFixed(2)} price
         </span>
       </div>
       <div className="relative h-5 rounded-lg overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
@@ -75,10 +76,10 @@ function PriceBar({ price, iv, label, color }: {
           style={{ left: `${pricePct}%`, background: 'rgba(235,235,245,0.5)' }} />
         <div className="absolute inset-0 flex items-center px-2 gap-3">
           <span className="text-[10px] font-mono z-10" style={{ color }}>
-            IV ${iv.toFixed(0)}
+            IV {sym}{iv.toFixed(0)}
           </span>
           <span className="text-[10px] font-mono z-10" style={{ color: 'rgba(235,235,245,0.5)' }}>
-            Price ${price.toFixed(0)}
+            Price {sym}{price.toFixed(0)}
           </span>
           <span className="text-[10px] font-semibold ml-auto z-10"
             style={{ color: isUnder ? '#30D158' : '#FF453A' }}>
@@ -142,6 +143,7 @@ function NoData({ reason }: { reason: string }) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function ValuationPanel() {
   const { valuation, quote } = useStock()
+  const sym = getCurrencySymbol(quote?.currency)
 
   const defaultGrowth = valuation?.inputs.default_growth ?? 0.10
   const [growth,   setGrowth]   = useState(defaultGrowth)
@@ -191,12 +193,12 @@ export default function ValuationPanel() {
       <Card title="Graham Number" badge="√(22.5 × EPS × BVPS)">
         {graham ? (
           <div className="space-y-3">
-            <PriceBar price={price} iv={graham} label="Graham Number vs Market Price" color="#BF5AF2" />
+            <PriceBar price={price} iv={graham} label="Graham Number vs Market Price" color="#BF5AF2" sym={sym} />
             <div className="grid grid-cols-3 gap-3 mt-2">
               {[
-                { label: 'Trailing EPS', value: valuation.inputs.eps != null ? `$${valuation.inputs.eps.toFixed(2)}` : '—' },
-                { label: 'Book Value/Share', value: valuation.inputs.bvps != null ? `$${valuation.inputs.bvps.toFixed(2)}` : '—' },
-                { label: 'Graham Number', value: `$${graham.toFixed(2)}` },
+                { label: 'Trailing EPS', value: valuation.inputs.eps != null ? `${sym}${valuation.inputs.eps.toFixed(2)}` : '—' },
+                { label: 'Book Value/Share', value: valuation.inputs.bvps != null ? `${sym}${valuation.inputs.bvps.toFixed(2)}` : '—' },
+                { label: 'Graham Number', value: `${sym}${graham.toFixed(2)}` },
               ].map(s => (
                 <div key={s.label} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>{s.label}</p>
@@ -220,7 +222,7 @@ export default function ValuationPanel() {
       <Card title="DCF Calculator" badge="10-Year Discounted Cash Flow">
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
-            <PriceBar price={price} iv={dcfLive} label="DCF Intrinsic Value vs Market Price" color="#5AC8F5" />
+            <PriceBar price={price} iv={dcfLive} label="DCF Intrinsic Value vs Market Price" color="#5AC8F5" sym={sym} />
 
             {/* Assumption sliders */}
             <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -249,8 +251,8 @@ export default function ValuationPanel() {
                   label: 'Free Cash Flow',
                   value: valuation.inputs.fcf != null
                     ? (Math.abs(valuation.inputs.fcf) >= 1e9
-                        ? `$${(valuation.inputs.fcf / 1e9).toFixed(1)}B`
-                        : `$${(valuation.inputs.fcf / 1e6).toFixed(0)}M`)
+                        ? `${sym}${(valuation.inputs.fcf / 1e9).toFixed(1)}B`
+                        : `${sym}${(valuation.inputs.fcf / 1e6).toFixed(0)}M`)
                     : '—'
                 },
                 { label: 'Shares Outstanding',
@@ -260,7 +262,7 @@ export default function ValuationPanel() {
                         : `${(valuation.inputs.shares / 1e6).toFixed(0)}M`)
                     : '—'
                 },
-                { label: 'DCF Value/Share', value: dcfLive != null ? `$${dcfLive.toFixed(2)}` : '—' },
+                { label: 'DCF Value/Share', value: dcfLive != null ? `${sym}${dcfLive.toFixed(2)}` : '—' },
               ].map(s => (
                 <div key={s.label} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>{s.label}</p>

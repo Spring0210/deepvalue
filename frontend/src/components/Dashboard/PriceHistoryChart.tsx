@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
 import { useStock } from '../../context/StockContext'
+import { getCurrencySymbol } from '../../utils/currency'
 import { fetchHistory } from '../../api/client'
 import type { PriceHistory } from '../../types'
 
@@ -55,7 +56,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 }
 
 export default function PriceHistoryChart() {
-  const { ticker } = useStock()
+  const { ticker, quote } = useStock()
+  const sym = getCurrencySymbol(quote?.currency)
   const [period, setPeriod]     = useState<string>('1y')
   const [data, setData]         = useState<PriceHistory | null>(null)
   const [loading, setLoading]   = useState(false)
@@ -172,7 +174,7 @@ export default function PriceHistoryChart() {
               />
               <YAxis
                 domain={[minPrice, maxPrice]}
-                tickFormatter={v => `$${v.toFixed(0)}`}
+                tickFormatter={v => `${sym}${v.toFixed(0)}`}
                 tick={{ fill: 'rgba(235,235,245,0.25)', fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}

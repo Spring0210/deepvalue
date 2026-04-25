@@ -1,5 +1,6 @@
 import { useStock } from '../../context/StockContext'
 import type { BuffettRatio } from '../../types'
+import { getCurrencySymbol } from '../../utils/currency'
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 function ScoreRing({ score, pass, total }: { score: number; pass: number; total: number }) {
@@ -49,13 +50,13 @@ function Badge({ passes }: { passes: boolean | null }) {
 }
 
 // ── Value formatter ───────────────────────────────────────────────────────────
-function fmt(value: number | null, name: string): string {
+function fmt(value: number | null, name: string, sym: string): string {
   if (value === null) return '—'
   if (name === 'Treasury Stock' || name === 'Preferred Stock') {
     const abs = Math.abs(value)
-    if (abs >= 1e9) return `$${(value / 1e9).toFixed(1)}B`
-    if (abs >= 1e6) return `$${(value / 1e6).toFixed(0)}M`
-    return `$${value.toFixed(0)}`
+    if (abs >= 1e9) return `${sym}${(value / 1e9).toFixed(1)}B`
+    if (abs >= 1e6) return `${sym}${(value / 1e6).toFixed(0)}M`
+    return `${sym}${value.toFixed(0)}`
   }
   if (Math.abs(value) >= 5) return `${value.toFixed(2)}x`
   return `${(value * 100).toFixed(1)}%`
@@ -70,6 +71,8 @@ const CATEGORY_META: Record<string, { color: string; label: string }> = {
 
 // ── Ratio Card ────────────────────────────────────────────────────────────────
 function RatioCard({ ratio }: { ratio: BuffettRatio }) {
+  const { quote } = useStock()
+  const sym = getCurrencySymbol(quote?.currency)
   const passColor  = ratio.passes === true ? '#30D158' : ratio.passes === false ? '#FF453A' : 'rgba(235,235,245,0.2)'
 
   return (
@@ -86,7 +89,7 @@ function RatioCard({ ratio }: { ratio: BuffettRatio }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-[13px] font-semibold" style={{ color: passColor }}>
-            {fmt(ratio.value, ratio.name)}
+            {fmt(ratio.value, ratio.name, sym)}
           </span>
           <Badge passes={ratio.passes} />
         </div>

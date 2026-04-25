@@ -1,4 +1,5 @@
 import type { StockQuote, MoatResult } from '../../types'
+import { getCurrencySymbol } from '../../utils/currency'
 
 function fmt(n: number | null | undefined, decimals = 2): string {
   if (n === null || n === undefined) return '—'
@@ -8,12 +9,12 @@ function pct(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—'
   return `${(n * 100).toFixed(1)}%`
 }
-function fmtCap(n: number | null | undefined): string {
+function fmtCap(n: number | null | undefined, sym: string): string {
   if (!n) return '—'
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`
-  if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`
-  if (n >= 1e6)  return `$${(n / 1e6).toFixed(1)}M`
-  return `$${n.toLocaleString()}`
+  if (n >= 1e12) return `${sym}${(n / 1e12).toFixed(2)}T`
+  if (n >= 1e9)  return `${sym}${(n / 1e9).toFixed(2)}B`
+  if (n >= 1e6)  return `${sym}${(n / 1e6).toFixed(1)}M`
+  return `${sym}${n.toLocaleString()}`
 }
 
 const MOAT_BADGE: Record<string, { color: string; bg: string }> = {
@@ -41,10 +42,11 @@ function Stat({ label, value, highlight, color }: {
 }
 
 // 52-week high/low price bar
-function WeekRangeBar({ price, low, high }: {
+function WeekRangeBar({ price, low, high, sym }: {
   price: number | null | undefined
   low: number | null | undefined
   high: number | null | undefined
+  sym: string
 }) {
   if (!price || !low || !high || high <= low) return null
   const pct = Math.max(0, Math.min(100, ((price - low) / (high - low)) * 100))
@@ -57,7 +59,7 @@ function WeekRangeBar({ price, low, high }: {
       <div className="flex justify-between text-[10px] mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>
         <span className="uppercase tracking-wider">52-Week Range</span>
         <span className="font-mono" style={{ color: 'rgba(235,235,245,0.4)' }}>
-          ${fmt(low, 2)} — ${fmt(high, 2)}
+          {sym}{fmt(low, 2)} — {sym}{fmt(high, 2)}
         </span>
       </div>
       <div className="relative h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
@@ -95,13 +97,14 @@ function AnalystBadge({ rec }: { rec: string | null | undefined }) {
 }
 
 // Analyst price target range bar: Low ——[median|mean]—— High with current price pin
-function TargetRangeBar({ price, low, mean, median, high, analysts }: {
+function TargetRangeBar({ price, low, mean, median, high, analysts, sym }: {
   price: number | null | undefined
   low: number | null | undefined
   mean: number | null | undefined
   median: number | null | undefined
   high: number | null | undefined
   analysts: number | null | undefined
+  sym: string
 }) {
   if (!low || !high || !mean || high <= low) return null
   const rangeMin = Math.min(low, price ?? low) * 0.97
@@ -177,22 +180,22 @@ function TargetRangeBar({ price, low, mean, median, high, analysts }: {
       {/* Labels */}
       <div className="relative h-5 mt-0.5 text-[10px] font-mono" style={{ color: 'rgba(235,235,245,0.35)' }}>
         <span className="absolute -translate-x-1/2" style={{ left: pos(low), color: '#FF453A' }}>
-          ${low.toFixed(0)}
+          {sym}{low.toFixed(0)}
         </span>
         {median && (
           <span className="absolute -translate-x-1/2" style={{ left: pos(median), color: '#FF9F0A' }}>
-            ${median.toFixed(0)}
+            {sym}{median.toFixed(0)}
           </span>
         )}
         <span className="absolute -translate-x-1/2" style={{ left: pos(mean), color: '#0A84FF' }}>
-          ${mean.toFixed(0)}
+          {sym}{mean.toFixed(0)}
         </span>
         <span className="absolute -translate-x-1/2" style={{ left: pos(high), color: '#30D158' }}>
-          ${high.toFixed(0)}
+          {sym}{high.toFixed(0)}
         </span>
         {price && (
           <span className="absolute -translate-x-1/2 font-semibold" style={{ left: pos(price), color: '#F5F5F7' }}>
-            ${price.toFixed(0)}
+            {sym}{price.toFixed(0)}
           </span>
         )}
       </div>
@@ -217,6 +220,7 @@ function TargetRangeBar({ price, low, mean, median, high, analysts }: {
 }
 
 export default function StockOverview({ ticker, quote, moat }: Props) {
+  const sym = getCurrencySymbol(quote.currency)
   const isUp = (quote.changesPercentage ?? 0) >= 0
   const changeColor = isUp ? '#30D158' : '#FF453A'
 
@@ -250,7 +254,7 @@ export default function StockOverview({ ticker, quote, moat }: Props) {
 
         <div className="text-right">
           <p className="text-2xl font-bold tabular-nums" style={{ color: '#F5F5F7' }}>
-            ${fmt(quote.price)}
+            {sym}{fmt(quote.price)}
           </p>
           <p className="text-xs font-mono mt-0.5" style={{ color: changeColor }}>
             {isUp ? '+' : ''}{fmt(quote.change)} ({isUp ? '+' : ''}{fmt(quote.changesPercentage)}%)
@@ -260,7 +264,7 @@ export default function StockOverview({ ticker, quote, moat }: Props) {
 
       {/* Stats grid */}
       <div className="px-4 py-3 grid grid-cols-4 gap-x-4 gap-y-3 sm:grid-cols-6 lg:grid-cols-8">
-        <Stat label="Market Cap"   value={fmtCap(quote.marketCap)} highlight />
+        <Stat label="Market Cap"   value={fmtCap(quote.marketCap, sym)} highlight />
         <Stat label="P/E (TTM)"    value={fmt(quote.pe, 1)} />
         <Stat label="Forward P/E"  value={fmt(quote.forwardPE, 1)} />
         <Stat label="PEG Ratio"    value={fmt(quote.pegRatio, 2)} />
@@ -274,6 +278,7 @@ export default function StockOverview({ ticker, quote, moat }: Props) {
           price={quote.price}
           low={quote.fiftyTwoWeekLow}
           high={quote.fiftyTwoWeekHigh}
+          sym={sym}
         />
       </div>
 
@@ -305,6 +310,7 @@ export default function StockOverview({ ticker, quote, moat }: Props) {
             median={quote.targetMedianPrice}
             high={quote.targetHighPrice}
             analysts={quote.numberOfAnalystOpinions}
+            sym={sym}
           />
         </div>
       )}

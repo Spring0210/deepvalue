@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import type { StockFinancials } from '../../types'
+import { useStock } from '../../context/StockContext'
+import { getCurrencySymbol } from '../../utils/currency'
 
-function fmtMoney(val: number | null | undefined): string {
+function fmtMoney(val: number | null | undefined, sym: string): string {
   if (val === null || val === undefined) return '—'
   const abs = Math.abs(val)
   const sign = val < 0 ? '-' : ''
-  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`
-  if (abs >= 1e9)  return `${sign}$${(abs / 1e9).toFixed(2)}B`
-  if (abs >= 1e6)  return `${sign}$${(abs / 1e6).toFixed(1)}M`
-  return `${sign}$${abs.toLocaleString()}`
+  if (abs >= 1e12) return `${sign}${sym}${(abs / 1e12).toFixed(2)}T`
+  if (abs >= 1e9)  return `${sign}${sym}${(abs / 1e9).toFixed(2)}B`
+  if (abs >= 1e6)  return `${sign}${sym}${(abs / 1e6).toFixed(1)}M`
+  return `${sign}${sym}${abs.toLocaleString()}`
 }
 
 const SECTION_META: Record<string, { color: string }> = {
@@ -17,9 +19,10 @@ const SECTION_META: Record<string, { color: string }> = {
   'Cash Flow Statement': { color: '#FF9F0A' },
 }
 
-function Statement({ title, data }: {
+function Statement({ title, data, sym }: {
   title: string
   data: Record<string, Record<string, number | null>>
+  sym: string
 }) {
   const [open, setOpen] = useState(true)
   const columns = Object.keys(data)
@@ -85,7 +88,7 @@ function Statement({ title, data }: {
                     return (
                       <td key={col} className="px-3 py-2 text-right font-mono tabular-nums"
                         style={{ color: v !== null && v < 0 ? '#FF453A' : 'rgba(235,235,245,0.6)' }}>
-                        {fmtMoney(v)}
+                        {fmtMoney(v, sym)}
                       </td>
                     )
                   })}
@@ -100,11 +103,13 @@ function Statement({ title, data }: {
 }
 
 export default function StatementTable({ financials }: { financials: StockFinancials }) {
+  const { quote } = useStock()
+  const sym = getCurrencySymbol(quote?.currency)
   return (
     <div>
-      <Statement title="Income Statement"    data={financials.financials} />
-      <Statement title="Balance Sheet"       data={financials.balanceSheet} />
-      <Statement title="Cash Flow Statement" data={financials.cashflow} />
+      <Statement title="Income Statement"    data={financials.financials}  sym={sym} />
+      <Statement title="Balance Sheet"       data={financials.balanceSheet} sym={sym} />
+      <Statement title="Cash Flow Statement" data={financials.cashflow}     sym={sym} />
     </div>
   )
 }
