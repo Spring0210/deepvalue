@@ -117,18 +117,18 @@
 ### 2.1 Intrinsic Value Models
 - [x] **DCF Calculator** — 10-year discounted cash flow with user-adjustable growth rate and discount rate
 - [x] **Graham Number** — √(22.5 × EPS × BVPS) — classic Ben Graham formula
-- [ ] **FCF Yield Valuation** — fair value based on normalized FCF yield vs 10Y Treasury
-- [ ] **Earnings Power Value (EPV)** — Bruce Greenwald's no-growth DCF variant
+- [x] **FCF Yield Valuation** — fair value based on normalized FCF yield vs 10Y Treasury
+- [x] **Earnings Power Value (EPV)** — Bruce Greenwald's no-growth DCF variant
 
 ### 2.2 Margin of Safety
 - [x] Display current price vs estimated intrinsic value range
 - [x] Visual margin-of-safety gauge (price vs value)
-- [ ] "Buffett Circle of Competence" check — flag highly complex businesses
+- [x] "Buffett Circle of Competence" check — flag highly complex businesses
 
 ### 2.3 Modern Valuation Metrics
-- [ ] **ROIC** (Return on Invested Capital) — Buffett's preferred efficiency metric
+- [x] **ROIC** (Return on Invested Capital) — Buffett's preferred efficiency metric
 - [ ] **EV/EBITDA** comparison vs sector median
-- [ ] **Price-to-FCF** ratio
+- [x] **Price-to-FCF** ratio
 - [ ] **PEG Ratio** interpretation (growth-adjusted value)
 
 ---

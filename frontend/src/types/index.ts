@@ -60,9 +60,20 @@ export interface StockQuote {
 export interface StockValuation {
   graham: number | null
   dcf_base: number | null
+  fcf_yield_value: number | null
+  epv: number | null
   current_price: number | null
   mos_graham: number | null
   mos_dcf: number | null
+  mos_fcf_yield: number | null
+  mos_epv: number | null
+  roic: number | null
+  price_to_fcf: number | null
+  circle_of_competence: {
+    within: boolean
+    flags: string[]
+    complexity: 'Low' | 'Medium' | 'High'
+  } | null
   inputs: {
     eps: number | null
     bvps: number | null

@@ -140,15 +140,37 @@ function NoData({ reason }: { reason: string }) {
   )
 }
 
+// ── FCF Yield math (mirrors backend) ────────────────────────────────────────
+function calcFCFYield(
+  fcf: number | null,
+  shares: number | null,
+  requiredYield: number,
+): number | null {
+  if (!fcf || !shares || fcf <= 0 || shares <= 0 || requiredYield <= 0) return null
+  return (fcf / shares) / requiredYield
+}
+
+// ── Stat cell ────────────────────────────────────────────────────────────────
+function StatCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>{label}</p>
+      <p className="text-sm font-semibold font-mono" style={{ color: 'rgba(235,235,245,0.75)' }}>{value}</p>
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: 'rgba(235,235,245,0.3)' }}>{sub}</p>}
+    </div>
+  )
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function ValuationPanel() {
   const { valuation, quote } = useStock()
   const sym = getCurrencySymbol(quote?.currency)
 
   const defaultGrowth = valuation?.inputs.default_growth ?? 0.10
-  const [growth,   setGrowth]   = useState(defaultGrowth)
-  const [discount, setDiscount] = useState(0.10)
-  const [terminal, setTerminal] = useState(0.03)
+  const [growth,        setGrowth]        = useState(defaultGrowth)
+  const [discount,      setDiscount]      = useState(0.10)
+  const [terminal,      setTerminal]      = useState(0.03)
+  const [requiredYield, setRequiredYield] = useState(0.07)
 
   const price  = valuation?.current_price ?? quote?.price ?? null
   const graham = valuation?.graham ?? null
@@ -158,8 +180,15 @@ export default function ValuationPanel() {
     [valuation, growth, discount, terminal]
   )
 
-  const mosDCF    = mos(price, dcfLive)
-  const mosGraham = mos(price, graham)
+  const fcfYieldLive = useMemo(() =>
+    calcFCFYield(valuation?.inputs.fcf ?? null, valuation?.inputs.shares ?? null, requiredYield),
+    [valuation, requiredYield]
+  )
+
+  const mosDCF      = mos(price, dcfLive)
+  const mosGraham   = mos(price, graham)
+  const mosFCFYield = mos(price, fcfYieldLive)
+  const mosEPV      = mos(price, valuation?.epv ?? null)
 
   if (!valuation) {
     return (
@@ -170,19 +199,66 @@ export default function ValuationPanel() {
   }
 
   const pctFmt = (v: number) => `${(v * 100).toFixed(1)}%`
+  const coc = valuation.circle_of_competence
 
   return (
     <div className="space-y-4">
 
+      {/* Circle of Competence warning */}
+      {coc && !coc.within && (
+        <div className="rounded-xl px-4 py-3 flex gap-3" style={{ background: 'rgba(255,159,10,0.1)', border: '1px solid rgba(255,159,10,0.25)' }}>
+          <div className="mt-0.5 text-[13px]" style={{ color: '#FF9F0A' }}>⚠</div>
+          <div>
+            <p className="text-xs font-semibold mb-1" style={{ color: '#FF9F0A' }}>
+              Circle of Competence — {coc.complexity} Complexity
+            </p>
+            <ul className="space-y-0.5">
+              {coc.flags.map((f, i) => (
+                <li key={i} className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.5)' }}>
+                  {f}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* Competitive Moat */}
       <MoatCard />
 
-      {/* Margin of Safety summary */}
+      {/* ROIC + P/FCF row */}
+      {(valuation.roic != null || valuation.price_to_fcf != null) && (
+        <Card title="Capital Efficiency">
+          <div className="grid grid-cols-2 gap-3">
+            <StatCell
+              label="ROIC"
+              value={valuation.roic != null ? `${(valuation.roic * 100).toFixed(1)}%` : '—'}
+              sub={valuation.roic != null
+                ? (valuation.roic >= 0.15 ? 'Excellent (≥ 15%)' : valuation.roic >= 0.10 ? 'Good (≥ 10%)' : 'Below average')
+                : undefined}
+            />
+            <StatCell
+              label="Price / FCF"
+              value={valuation.price_to_fcf != null ? `${valuation.price_to_fcf.toFixed(1)}x` : '—'}
+              sub={valuation.price_to_fcf != null
+                ? (valuation.price_to_fcf < 15 ? 'Cheap (< 15×)' : valuation.price_to_fcf < 25 ? 'Fair (15–25×)' : 'Expensive (> 25×)')
+                : undefined}
+            />
+          </div>
+          <p className="text-[11px] mt-3" style={{ color: 'rgba(235,235,245,0.2)' }}>
+            ROIC = NOPAT / Invested Capital. Buffett's preferred measure of capital allocation quality.
+            P/FCF compares market price to free cash flow yield.
+          </p>
+        </Card>
+      )}
+
+      {/* Margin of Safety summary — 2×2 grid */}
       <Card title="Margin of Safety">
-        <div className="flex gap-8 justify-center py-2">
-          <MoSGauge value={mosGraham} label="Graham Number" />
-          <div className="w-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
-          <MoSGauge value={mosDCF} label="DCF (10-yr)" />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-2">
+          <MoSGauge value={mosGraham}   label="Graham Number" />
+          <MoSGauge value={mosDCF}      label="DCF (10-yr)" />
+          <MoSGauge value={mosFCFYield} label="FCF Yield Value" />
+          <MoSGauge value={mosEPV}      label="EPV (no growth)" />
         </div>
         <p className="text-[11px] mt-3 text-center" style={{ color: 'rgba(235,235,245,0.2)' }}>
           Positive = price below intrinsic value. Buffett targets ≥ 25–30% margin of safety.
@@ -196,9 +272,9 @@ export default function ValuationPanel() {
             <PriceBar price={price} iv={graham} label="Graham Number vs Market Price" color="#BF5AF2" sym={sym} />
             <div className="grid grid-cols-3 gap-3 mt-2">
               {[
-                { label: 'Trailing EPS', value: valuation.inputs.eps != null ? `${sym}${valuation.inputs.eps.toFixed(2)}` : '—' },
+                { label: 'Trailing EPS',   value: valuation.inputs.eps  != null ? `${sym}${valuation.inputs.eps.toFixed(2)}`  : '—' },
                 { label: 'Book Value/Share', value: valuation.inputs.bvps != null ? `${sym}${valuation.inputs.bvps.toFixed(2)}` : '—' },
-                { label: 'Graham Number', value: `${sym}${graham.toFixed(2)}` },
+                { label: 'Graham Number',  value: `${sym}${graham.toFixed(2)}` },
               ].map(s => (
                 <div key={s.label} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>{s.label}</p>
@@ -213,7 +289,7 @@ export default function ValuationPanel() {
           </div>
         ) : (
           <NoData reason={`Graham Number requires positive EPS and Book Value per Share.${
-            !valuation.inputs.eps ? ' EPS not available.' : ''
+            !valuation.inputs.eps  ? ' EPS not available.'        : ''
           }${!valuation.inputs.bvps ? ' Book value not available.' : ''}`} />
         )}
       </Card>
@@ -223,45 +299,20 @@ export default function ValuationPanel() {
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
             <PriceBar price={price} iv={dcfLive} label="DCF Intrinsic Value vs Market Price" color="#5AC8F5" sym={sym} />
-
-            {/* Assumption sliders */}
             <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
               <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.25)' }}>Assumptions</p>
-              <SliderRow
-                label="FCF Growth Rate (yrs 1–10)"
-                value={growth} min={0} max={0.40} step={0.005}
-                format={pctFmt} onChange={setGrowth}
-              />
-              <SliderRow
-                label="Discount Rate (WACC)"
-                value={discount} min={0.05} max={0.20} step={0.005}
-                format={pctFmt} onChange={setDiscount}
-              />
-              <SliderRow
-                label="Terminal Growth Rate"
-                value={terminal} min={0.01} max={0.05} step={0.005}
-                format={pctFmt} onChange={setTerminal}
-              />
+              <SliderRow label="FCF Growth Rate (yrs 1–10)" value={growth}   min={0}    max={0.40} step={0.005} format={pctFmt} onChange={setGrowth} />
+              <SliderRow label="Discount Rate (WACC)"       value={discount} min={0.05} max={0.20} step={0.005} format={pctFmt} onChange={setDiscount} />
+              <SliderRow label="Terminal Growth Rate"        value={terminal} min={0.01} max={0.05} step={0.005} format={pctFmt} onChange={setTerminal} />
             </div>
-
-            {/* DCF inputs summary */}
             <div className="grid grid-cols-3 gap-3">
               {[
-                {
-                  label: 'Free Cash Flow',
-                  value: valuation.inputs.fcf != null
-                    ? (Math.abs(valuation.inputs.fcf) >= 1e9
-                        ? `${sym}${(valuation.inputs.fcf / 1e9).toFixed(1)}B`
-                        : `${sym}${(valuation.inputs.fcf / 1e6).toFixed(0)}M`)
-                    : '—'
-                },
-                { label: 'Shares Outstanding',
-                  value: valuation.inputs.shares != null
-                    ? (valuation.inputs.shares >= 1e9
-                        ? `${(valuation.inputs.shares / 1e9).toFixed(2)}B`
-                        : `${(valuation.inputs.shares / 1e6).toFixed(0)}M`)
-                    : '—'
-                },
+                { label: 'Free Cash Flow', value: valuation.inputs.fcf != null
+                    ? (Math.abs(valuation.inputs.fcf) >= 1e9 ? `${sym}${(valuation.inputs.fcf / 1e9).toFixed(1)}B` : `${sym}${(valuation.inputs.fcf / 1e6).toFixed(0)}M`)
+                    : '—' },
+                { label: 'Shares Outstanding', value: valuation.inputs.shares != null
+                    ? (valuation.inputs.shares >= 1e9 ? `${(valuation.inputs.shares / 1e9).toFixed(2)}B` : `${(valuation.inputs.shares / 1e6).toFixed(0)}M`)
+                    : '—' },
                 { label: 'DCF Value/Share', value: dcfLive != null ? `${sym}${dcfLive.toFixed(2)}` : '—' },
               ].map(s => (
                 <div key={s.label} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
@@ -270,7 +321,6 @@ export default function ValuationPanel() {
                 </div>
               ))}
             </div>
-
             <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.25)' }}>
               10-year FCF projection discounted at WACC, plus Gordon Growth terminal value.
               Default growth rate derived from revenue growth (capped 3–25%). Adjust sliders for bull/bear scenarios.
@@ -278,6 +328,55 @@ export default function ValuationPanel() {
           </div>
         ) : (
           <NoData reason="DCF requires Free Cash Flow and Shares Outstanding data from yfinance." />
+        )}
+      </Card>
+
+      {/* FCF Yield Valuation */}
+      <Card title="FCF Yield Valuation" badge="FCF/Share ÷ Required Yield">
+        {valuation.inputs.fcf && valuation.inputs.shares ? (
+          <div className="space-y-4">
+            <PriceBar price={price} iv={fcfYieldLive} label="FCF Yield Fair Value vs Market Price" color="#30D158" sym={sym} />
+            <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.25)' }}>Required FCF Yield</p>
+              <SliderRow
+                label="Required Yield (risk-free + equity premium)"
+                value={requiredYield} min={0.04} max={0.15} step={0.005}
+                format={pctFmt} onChange={setRequiredYield}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <StatCell label="FCF / Share"    value={valuation.inputs.fcf && valuation.inputs.shares
+                ? `${sym}${(valuation.inputs.fcf / valuation.inputs.shares).toFixed(2)}` : '—'} />
+              <StatCell label="Fair Value"      value={fcfYieldLive != null ? `${sym}${fcfYieldLive.toFixed(2)}` : '—'} />
+            </div>
+            <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.25)' }}>
+              Treats the stock like a bond: Fair Value = FCF per share ÷ required yield.
+              Default 7% = ~4.5% risk-free rate + 2.5% equity premium.
+              Lower yield assumption → higher implied fair value.
+            </p>
+          </div>
+        ) : (
+          <NoData reason="FCF Yield Valuation requires Free Cash Flow and Shares Outstanding." />
+        )}
+      </Card>
+
+      {/* EPV */}
+      <Card title="Earnings Power Value" badge="Greenwald No-Growth DCF">
+        {valuation.epv != null ? (
+          <div className="space-y-3">
+            <PriceBar price={price} iv={valuation.epv} label="EPV vs Market Price" color="#FF9F0A" sym={sym} />
+            <div className="grid grid-cols-2 gap-3">
+              <StatCell label="EPV / Share"     value={`${sym}${valuation.epv.toFixed(2)}`} />
+              <StatCell label="Margin of Safety" value={mosEPV != null ? `${mosEPV >= 0 ? '+' : ''}${mosEPV.toFixed(1)}%` : '—'} />
+            </div>
+            <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.25)' }}>
+              Bruce Greenwald's no-growth valuation: EPV = NOPAT ÷ WACC.
+              Assumes zero future growth — represents the floor value of the business's current earnings power.
+              Any price above EPV requires you to pay for growth expectations.
+            </p>
+          </div>
+        ) : (
+          <NoData reason="EPV requires Operating Income data from financial statements." />
         )}
       </Card>
 
