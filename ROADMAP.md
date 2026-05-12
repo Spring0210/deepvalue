@@ -1,18 +1,25 @@
-# BuffettAI — Product Roadmap
+# DeepValue Agent — Product Roadmap
 
-> Goal: A professional-grade US equity analysis platform that combines Warren Buffett's timeless value investing principles with modern quantitative investment concepts to provide actionable stock selection guidance.
+> **Goal:** An AI-native, multi-agent investment research platform. Users ask natural-language questions ("Should I buy NVDA?", "Compare AAPL vs MSFT in cloud margin trajectory"), and the system autonomously plans research, dispatches specialized subagents (Fundamentals / News / Technical / Valuation / Risk), retrieves SEC filings, reflects on findings, and produces a structured, source-grounded report — with full observability over every tool call, token cost, and latency P95.
+>
+> **Resume narrative:** *"Designed and built a production multi-agent investment research platform. Self-authored agent harness with plan-act-reflect loop, tool sandboxing, and resumable execution. Orchestrator coordinates 5 specialized subagents. Hybrid RAG (BM25 + dense + cross-encoder rerank + GraphRAG) over SEC EDGAR. Multi-model routing across Haiku/Sonnet/Opus + Anthropic prompt caching cut average inference cost by X%. LLM-as-judge eval harness tracks hallucination rate per release. Postgres+pgvector / Redis / Celery / Docker / GitHub Actions / Langfuse. Exposed all financial tools as an MCP server for client interoperability."*
 
 ---
 
-## Current State (v0.2)
+## Current State (v0.4)
 
-- 14 Buffett metrics with weighted scoring (0–100), grouped by Income Statement / Balance Sheet / Cash Flow
+- 14 Buffett metrics with weighted scoring (0–100), sector-adjusted thresholds, trend bonus/penalty
 - yfinance data backend — no API key required (US/HK/A-shares)
 - Extended quote data: ROE, PEG, FCF Yield, Forward P/E, EV/EBITDA, Revenue Growth, Sector/Industry
-- RAG-powered chat advisor (Groq LLaMA 3.1-8B + FAISS)
-- Streaming AI investment recommendation with sector-aware prompts
+- RAG-powered chat advisor (Groq LLaMA 3.1-8B + FAISS) with multi-turn history
+- Streaming AI investment recommendation (Groq LLaMA 70B) with sector-aware few-shot prompts
+- Valuation engine: DCF, Graham Number, FCF Yield Value, EPV, ROIC, Margin of Safety, Circle of Competence
+- Competitive moat classifier: 5 moat types × Wide/Narrow/None strength rating
 - Financial statement viewer (Income / Balance / Cash Flow)
-- Apple HIG dark UI — bar chart, ratio cards, score gauge
+- Watchlist (localStorage) with add/remove and persistent state
+- Price history chart
+- Apple HIG dark UI — bar chart, ratio cards, score gauge, valuation panel, moat card
+- API rate limiting (slowapi) + async yfinance calls + ticker input sanitization
 
 ---
 
@@ -175,7 +182,7 @@
 - [x] Moat strength rating: Wide / Narrow / None
 
 ### 4.3 Industry-Aware Scoring
-- [ ] Sector-specific metric weights (tech vs consumer vs financials vs utilities)
+- [x] Sector-specific metric weights (tech vs consumer vs financials vs utilities) — `_sector_threshold()` in `buffett.py`
 - [ ] Peer comparison: how does the stock rank within its sector?
 - [ ] Sector median benchmarks for each metric
 
@@ -219,33 +226,241 @@
 
 ---
 
-## Technical Debt & Infrastructure
+## Phase 7 — Agent System & Harness (Weeks 1–6) — **THE CORE**
 
-- [ ] Replace `lru_cache` with Redis for production-grade caching
-- [ ] Rate limiting on API routes
-- [ ] Error monitoring (Sentry)
-- [ ] Unit tests for `buffett.py` ratio calculations
-- [ ] CI/CD pipeline (GitHub Actions → Docker)
-- [ ] Environment config validation on startup
+**Goal:** Build a production-grade, observable, multi-agent harness from scratch. This is the centerpiece of the project and the strongest resume signal: system design + agentic AI + observability.
+
+**Success metrics (quantify on resume):**
+- ≥ 95% tool-call success rate (with retry/fallback)
+- Median end-to-end agent run < 30s for "single ticker buy/sell" query
+- P95 < 90s for "compare 3 stocks" multi-subagent query
+- 100% of agent runs traceable end-to-end (every step recorded)
+- Resumable: any agent run can be interrupted and resumed from checkpoint
+
+### 7.1 Agent Harness (self-authored, no LangGraph)
+
+> Build it yourself. LangGraph hides the parts that interviewers want you to explain.
+
+- [ ] **`AgentRunner` core loop** — plan → act → observe → reflect, with explicit state machine
+- [ ] **Tool registry** — Pydantic-typed tool definitions, JSON schema auto-generated for the LLM, runtime arg validation
+- [ ] **Tool dispatcher** — async tool execution, parallel tool calls in one turn, per-tool timeout, retry with exponential backoff
+- [ ] **Tool sandbox** — each tool runs in a bounded `asyncio.Task` with timeout + memory cap; failures don't crash the loop
+- [ ] **Structured output enforcement** — all agent responses parsed against Pydantic schemas; auto-repair loop on parse failure
+- [ ] **Persistent agent state** — every step (thought, tool_call, tool_result, observation) written to Postgres `agent_runs` + `agent_steps` tables
+- [ ] **Resumable execution** — `resume(run_id)` picks up from last persisted step
+- [ ] **Token / cost accounting** — every LLM call records `input_tokens`, `output_tokens`, `cached_tokens`, `cost_usd`, `model`, `latency_ms`
+- [ ] **Streaming traces** — SSE channel emits each step as it happens (`{"type":"tool_call","name":"get_news",...}`) for the UI
+
+### 7.2 Multi-Agent Orchestration
+
+- [ ] **Orchestrator Agent** — decomposes user query into a `ResearchPlan` (Pydantic), routes subtasks to specialists
+- [ ] **Fundamentals Subagent** — owns Buffett ratios, DCF, EPV, ROIC, Graham Number; uses existing `buffett.py` / `valuation.py` as tools
+- [ ] **News & Sentiment Subagent** — fetches news (NewsAPI / Tavily / Perplexity), classifies sentiment, dedupes by event
+- [ ] **Technical Subagent** — RSI, MACD, MA50/MA200, volume profile, support/resistance
+- [ ] **Valuation Subagent** — peer comparison, EV/EBITDA vs sector median, reverse-DCF implied growth
+- [ ] **Risk Subagent** — debt maturity wall, customer concentration, regulatory exposure (pulled from 10-K Item 1A)
+- [ ] **Inter-agent messaging** — subagents return structured `Finding` objects; orchestrator dedupes contradictions and synthesizes
+- [ ] **Reflexion pass** — final agent reviews its own report against the original query, flags gaps, can dispatch follow-up subagent runs
+
+### 7.3 Tool Library (called by all subagents)
+
+- [ ] `get_stock_quote` — live price, volume, 52w range
+- [ ] `get_buffett_score` — full 14-ratio breakdown
+- [ ] `get_valuation` — DCF / Graham / EPV with adjustable assumptions
+- [ ] `get_moat` — moat type + strength
+- [ ] `get_news` — last N days + sentiment
+- [ ] `get_technicals` — RSI, MACD, MAs, volatility
+- [ ] `get_peer_comparison` — auto-pick 3-5 sector peers, compare key ratios
+- [ ] `search_filings` — hybrid RAG over SEC 10-K/10-Q (delivered in Phase 9)
+- [ ] `get_prior_analysis` — recall past agent runs for the same ticker
+- [ ] `web_search` — fallback for ad-hoc queries (Tavily / Brave)
+
+### 7.4 MCP Server (Model Context Protocol)
+
+> 2026 keyword. Any MCP client (Claude Desktop, Cursor, custom) can plug into your tools.
+
+- [ ] Wrap the entire tool library as an MCP server (`mcp-server-deepvalue`)
+- [ ] Publish `stdio` + `streamable-http` transports
+- [ ] Document tool schemas; ship example `claude_desktop_config.json` snippet
+- [ ] Demo video: Claude Desktop using DeepValue tools end-to-end
+
+### 7.5 Model Routing
+
+- [ ] **Router policy** — Haiku for intent classification + simple RAG, Sonnet for analytical subagents, Opus for final synthesis (configurable per role)
+- [ ] **Prompt caching** — Anthropic ephemeral cache on system prompt + few-shots (target ≥ 80% cache hit rate on repeat tickers)
+- [ ] **Cost telemetry** — dashboard shows token spend per agent role, per query
+- [ ] **A/B harness** — pin two model configs side-by-side, route X% of traffic to each
+
+### 7.6 Agent UI
+
+- [ ] Natural-language entry: *"Should I buy Google?"*, *"Compare AAPL vs MSFT in services revenue growth"*
+- [ ] **Live trace panel** — streams each tool call, args, result preview, latency, cost (Anthropic Console-style)
+- [ ] **Final report** — structured sections: Summary · Fundamentals · Valuation · News · Technicals · Risks · Verdict
+- [ ] **Sources** — every claim links back to its tool call or filing chunk
+- [ ] PDF export of the agent report
 
 ---
 
-## Metric Priority Matrix
+## Phase 8 — Enterprise Infrastructure (Weeks 7–10)
 
-| Metric | Current | Phase 1 | Phase 2 | Phase 3+ |
-|--------|---------|---------|---------|----------|
-| 14 Buffett Ratios | ✅ | ✅ | ✅ | ✅ |
-| Weighted Score | ✅ | ✅ | ✅ | ✅ |
-| AI Recommendation | ✅ | Improved | ✅ | ✅ |
-| ROE / ROA | — | ✅ | ✅ | ✅ |
-| ROIC | — | — | ✅ | ✅ |
-| DCF / Graham Number | — | — | ✅ | ✅ |
-| Margin of Safety | — | — | ✅ | ✅ |
-| Moat Classification | — | — | — | ✅ |
-| Stock Screener | — | — | ✅ | ✅ |
-| Portfolio Tracker | — | — | — | ✅ |
-| Peer Comparison | — | — | — | ✅ |
+**Goal:** Move from "side project running on a laptop" to "production-deployable platform with auth, persistence, async work, CI/CD, and observability." This is what FAANG infra / 国内大厂 platform interviews drill on.
+
+**Success metrics:**
+- Cold-start `docker compose up` → working app in < 60s
+- All API routes < 500ms P95 (excluding LLM streaming)
+- 100% of releases pass CI before merge
+- Zero secrets in repo (validated by gitleaks pre-commit)
+
+### 8.1 Persistence Layer
+
+- [ ] **PostgreSQL** — replace localStorage / in-memory state. Tables: `users`, `watchlists`, `portfolios`, `agent_runs`, `agent_steps`, `analyses`, `filings_chunks`
+- [ ] **pgvector** — vector column on `filings_chunks` and `knowledge_chunks`; replaces FAISS (single-file, no concurrent writes)
+- [ ] **Redis** — cache layer for yfinance quotes (currently `cachetools`), pub/sub channel for agent step streaming, Celery broker
+- [ ] **Alembic migrations** — schema versioned in git, `migrate` runs in CI
+- [ ] **DB connection pooling** — `asyncpg` + `SQLAlchemy 2.x async`
+
+### 8.2 Auth & Multi-Tenancy
+
+- [ ] **OAuth login** — Google + GitHub via `Authlib`
+- [ ] **JWT sessions** — short-lived access + refresh tokens, httpOnly cookies
+- [ ] **Row-level access control** — every query scoped by `user_id`; agent runs / watchlists private per user
+- [ ] **API keys for programmatic access** — per-user tokens with scoped permissions
+- [ ] **Audit log** — every agent run, every tool invocation logged with `user_id`, `ip`, `ts`
+
+### 8.3 Async Workers
+
+- [ ] **Celery (or Arq)** + Redis broker
+- [ ] **Background job: nightly watchlist scan** — agent runs on every user's watchlist; deltas emailed/notified
+- [ ] **Background job: SEC EDGAR ingestion** — daily poll for new filings, chunk + embed
+- [ ] **Background job: regression eval** — Phase 9 eval suite runs on every model/prompt change
+- [ ] **Worker autoscale** — separate `worker-heavy` (LLM) and `worker-light` (data) queues
+
+### 8.4 Observability
+
+- [ ] **Langfuse self-hosted** (or LangSmith) — every LLM call, every agent step, every tool call traced; UI shows full conversation tree per run
+- [ ] **OpenTelemetry** — FastAPI middleware exports traces; correlate HTTP request → agent run → LLM calls
+- [ ] **Prometheus + Grafana** — RED metrics on every route, P50/P95/P99 latency, token spend per minute, cache hit rate
+- [ ] **Sentry** — error tracking for backend + frontend, source-mapped
+- [ ] **Status page** — `/status` endpoint shows DB, Redis, yfinance, Anthropic, Groq health
+
+### 8.5 DevOps & CI/CD
+
+- [ ] **Docker Compose** for local dev — backend + worker + postgres + redis + frontend + langfuse, one command
+- [ ] **Multi-stage Dockerfile** for backend (slim runtime image)
+- [ ] **GitHub Actions CI** — lint (ruff), type check (mypy + tsc), unit tests (pytest), integration tests, security scan (bandit + gitleaks), Docker build
+- [ ] **Pre-commit hooks** — ruff, mypy, gitleaks, conventional-commits
+- [ ] **Deploy target** — Fly.io / Railway (one-click) + Terraform module for AWS ECS (showcase)
+- [ ] **Environment config validation** — Pydantic `Settings` checks all required env vars at startup, fails fast
+
+### 8.6 Security & Reliability Hardening
+
+- [ ] **Input/output guardrails** — Pydantic validation on all routes, output filtering for PII / prompt-injection signatures
+- [ ] **LLM prompt-injection defenses** — system-prompt isolation, tool-result sanitization, never echo raw user input back to a tool that executes code
+- [ ] **Rate limiting per user** (currently per-IP) — `slowapi` + Redis backend
+- [ ] **Circuit breakers** on yfinance / NewsAPI / Anthropic — `pybreaker` or hand-rolled
+- [ ] **Graceful shutdown** — drain in-flight agent runs on SIGTERM
 
 ---
 
-*Last updated: 2026-04-17 · v0.3*
+## Phase 9 — Advanced RAG + Eval Harness (Weeks 11–14)
+
+**Goal:** Turn the project's knowledge layer from a static text file into a queryable, evaluated corpus over real SEC filings. The eval harness is what makes the project look like it was built by someone who has shipped LLM products.
+
+**Success metrics:**
+- ≥ 10,000 chunks indexed from ≥ 500 latest 10-K/10-Q filings
+- Hybrid retrieval beats dense-only on golden set by ≥ 15% recall@5
+- LLM-as-judge eval suite runs in CI; PR blocks if hallucination rate regresses by > 2pp
+- All claims in agent reports have source citations to a filing chunk or tool output
+
+### 9.1 SEC EDGAR Pipeline
+
+- [ ] **Crawler** — daily poll of EDGAR full-text search, fetch new 10-K / 10-Q / 8-K for tracked tickers
+- [ ] **Parser** — split filings by Item (1A Risk Factors, 7 MD&A, 7A Market Risk, 8 Financial Statements)
+- [ ] **Hierarchical chunking** — parent doc (Item-level) → child chunks (~500 tokens) with overlap; store both, retrieve children, return parents
+- [ ] **Metadata** — every chunk tagged with `ticker`, `cik`, `filing_date`, `item`, `fiscal_year`
+
+### 9.2 Hybrid Retrieval
+
+- [ ] **BM25** index (Postgres FTS or `rank_bm25`) for lexical matches
+- [ ] **Dense embeddings** — `text-embedding-3-small` or `voyage-3` (better than MiniLM for finance)
+- [ ] **Cross-encoder reranker** — `bge-reranker-v2-m3` on top-50 candidates → top-5
+- [ ] **Contextual retrieval** (Anthropic technique) — prepend a 50-token doc-level context to each chunk before embedding; cuts retrieval failure ~35% on Anthropic's reference benchmark
+- [ ] **Metadata filters** — agent can constrain by ticker, year, item: `search_filings(query, ticker="NVDA", item="1A", year=2025)`
+
+### 9.3 GraphRAG (optional but resume-shiny)
+
+- [ ] Extract entity graph from filings: company → competitors / suppliers / customers / regulators
+- [ ] Store in Postgres (or Neo4j) — supports "Who competes with NVDA?" and "What companies cite TSMC as supplier?"
+- [ ] Hybrid: vector retrieval finds candidate chunks, graph traversal expands to related entities
+
+### 9.4 LLM Eval Harness
+
+- [ ] **Golden dataset** — 100 manually-curated investment questions with reference answers (ticker, ground-truth verdict, key facts)
+- [ ] **LLM-as-judge** — Sonnet evaluates agent output on: factual accuracy, citation grounding, completeness, hallucination
+- [ ] **Eval runner CLI** — `python -m deepvalue.eval run --suite golden --model sonnet` → markdown report with per-question scoring
+- [ ] **Regression in CI** — every PR runs a sampled subset; full suite nightly
+- [ ] **Per-subagent evals** — separate eval sets for Fundamentals / News / Risk subagents
+- [ ] **Failure-mode tagging** — hallucination, missing-source, format-error, off-topic — track distribution over time
+- [ ] **Public eval dashboard** — `/evals` page shows latest scores per release
+
+### 9.5 Quality Signals on Live Traffic
+
+- [ ] **Thumb-up/down** on agent reports → labeled dataset for future SFT
+- [ ] **Output structured-error rate** — % of runs that failed Pydantic parse on first try
+- [ ] **Citation coverage** — % of factual claims with a source link
+
+---
+
+## Phase 10 — Polish, Metrics & Launch (Weeks 15–16)
+
+**Goal:** Ship to public, collect real usage, generate the numbers you put on your resume.
+
+- [ ] **Public deploy** — `deepvalue.app` (or similar), HTTPS, status page
+- [ ] **Onboarding** — sign in, search a ticker, see live agent trace
+- [ ] **Showcase reports** — pre-generated agent reports on 20 popular tickers, indexable for SEO
+- [ ] **Mobile responsive**
+- [ ] **Open source** the agent harness + MCP server as a separate repo (`deepvalue-harness`) with its own README — this is what recruiters click on
+- [ ] **Write a launch blog post** — "How I built a multi-agent investment research platform" (HN / r/MachineLearning / 知乎)
+- [ ] **Collect numbers for resume:**
+  - Total agent runs served
+  - Cost reduction from prompt caching + model routing (vs Opus-only baseline)
+  - Hallucination-rate delta vs single-shot LLM baseline (eval harness output)
+  - P50 / P95 / P99 latency
+  - GitHub stars
+
+---
+
+## Phase 11+ — Stretch (Months 5+)
+
+- [ ] **Fine-tune** a small open model (Qwen / Llama 3.1 8B) on collected agent traces — show end-to-end ML loop (data → SFT → deploy → eval)
+- [ ] **Backtest** agent verdicts vs forward returns (12-month rolling). Causal claims need care — frame as "verdict-return correlation," not "alpha"
+- [ ] **Voice agent** — Realtime API / Whisper + TTS; "Hey DeepValue, what's the take on NVDA today?"
+- [ ] **Multi-modal** — chart-reading: feed price chart screenshot to the agent for technical commentary
+- [ ] **Portfolio agent** — given user holdings, agent proactively flags concentration risk, earnings catalysts, valuation drift
+
+---
+
+## Resume-Ready Summary Table
+
+| Capability | Status | Resume Keyword |
+|---|---|---|
+| 14-metric weighted Buffett score + sector-adjusted thresholds | ✅ Done | Domain modeling |
+| Valuation engine (DCF / Graham / EPV / ROIC) | ✅ Done | Quantitative analysis |
+| Moat classification | ✅ Done | Heuristic ML |
+| Streaming LLM recommendation + RAG chat | ✅ Done | LLM integration, SSE |
+| **Self-authored agent harness** | Phase 7 | **Agent system design** |
+| **Multi-agent orchestration (1 + 5)** | Phase 7 | **Multi-agent / agentic AI** |
+| **MCP server** | Phase 7 | **MCP, interoperability** |
+| **Model routing + prompt caching** | Phase 7 | **LLM cost engineering** |
+| **Resumable agent runs in Postgres** | Phase 7 | **Stateful workflows** |
+| **OAuth + multi-tenancy + RBAC** | Phase 8 | **Auth, security** |
+| **Postgres + pgvector + Redis + Celery** | Phase 8 | **Production data stack** |
+| **Langfuse + OTel + Prometheus + Sentry** | Phase 8 | **Observability** |
+| **Docker + GitHub Actions CI/CD** | Phase 8 | **DevOps** |
+| **SEC EDGAR hybrid + GraphRAG** | Phase 9 | **Advanced RAG** |
+| **LLM-as-judge eval harness in CI** | Phase 9 | **LLM eval / quality engineering** |
+| **Public launch + collected metrics** | Phase 10 | **Shipping** |
+
+---
+
+*Last updated: 2026-05-11 · v0.5 (renamed DeepValue Agent, AI-native pivot)*

@@ -1,72 +1,95 @@
-# BuffettAI — Value Investing Stock Analyzer
+# DeepValue Agent
 
-A full-stack AI-powered equity analysis platform built on Warren Buffett's value investing framework and modern quantitative metrics. Search any publicly traded stock — US, Hong Kong, or A-share — to get a weighted Buffett score, intrinsic value estimates, competitive moat classification, full financial statement data, and a streaming AI investment recommendation grounded in a RAG knowledge base.
+> An AI-native, multi-agent investment research platform. Ask a natural-language question — *"Should I buy NVDA?"*, *"Compare AAPL vs MSFT in services margin trajectory"* — and a coordinated set of specialized agents autonomously plan the research, dispatch tools (financials, news, technicals, valuation, SEC filings), reflect on findings, and produce a structured, source-grounded report with end-to-end observability over every tool call, token, and dollar spent.
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat&logo=fastapi)
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat&logo=typescript)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python)
-![Groq](https://img.shields.io/badge/Groq-LLaMA_3.1-F55036?style=flat)
+![Anthropic](https://img.shields.io/badge/Anthropic-Claude-D97757?style=flat)
+![Groq](https://img.shields.io/badge/Groq-LLaMA-F55036?style=flat)
 ![yfinance](https://img.shields.io/badge/yfinance-1.3-blueviolet?style=flat)
+
+> **Status:** v0.4 ships a full single-agent value-investing analyzer (14-metric Buffett score, DCF/EPV/ROIC valuation, moat classification, RAG chat). v0.5 — *in progress* — is an AI-native pivot to a multi-agent harness with MCP server, hybrid RAG over SEC filings, LLM-as-judge eval harness, and full observability stack. See [ROADMAP.md](./ROADMAP.md) for the 16-week build plan.
 
 ---
 
-## Features
+## What makes this AI-native (v0.5 target)
 
-### Buffett Score (0–100)
-14 financial metrics derived from Buffett's principles, each assigned a weight based on its importance in modern value investing. The composite score is normalized across non-N/A metrics — so missing data never artificially deflates the result.
+| Layer | What it is | Why it matters |
+|---|---|---|
+| **Self-authored agent harness** | Plan-act-reflect loop with tool registry, sandboxing, retry, persistent state, resumable runs | Demonstrates agentic-system design end-to-end (not just `langgraph.invoke`) |
+| **Multi-agent orchestration** | Orchestrator + 5 specialized subagents (Fundamentals, News, Technical, Valuation, Risk) | Real task decomposition, inter-agent messaging, reflexion |
+| **MCP server** | All financial tools exposed via Model Context Protocol | Pluggable into Claude Desktop, Cursor, or any MCP client |
+| **Hybrid RAG over SEC EDGAR** | BM25 + dense + cross-encoder rerank + contextual retrieval + GraphRAG over 10-K/10-Q | State-of-the-art retrieval grounded in primary sources |
+| **Model routing + prompt caching** | Haiku → Sonnet → Opus by role; ephemeral cache on system prompt | Quantified cost reduction (target ≥ 60% vs Opus-only baseline) |
+| **LLM-as-judge eval harness** | 100-question golden set, regression in CI, hallucination-rate tracking | Quality engineering practice mirroring how LLM products are actually shipped |
+| **Full observability** | Langfuse + OpenTelemetry + Prometheus + Sentry, every step traced with cost & latency | Production-grade visibility (resume keyword: SRE-friendly LLM ops) |
+
+---
+
+## v0.4 — What works today
+
+### Buffett Score (0–100) — sector-adjusted, trend-aware
+14 financial metrics derived from Buffett's principles, each weighted by importance. Thresholds adapt per sector (tech R&D allowance, financials leverage tolerance). Three-year improving trends earn a bonus; deteriorating metrics incur a penalty. Score is normalized over non-N/A metrics so missing data never artificially deflates it.
 
 | Category | Metrics |
-|----------|---------|
+|---|---|
 | Income Statement | Gross Margin, SG&A Margin, R&D Margin, Depreciation Margin, Interest Expense Margin, Effective Tax Rate, Net Profit Margin, EPS Growth |
 | Balance Sheet | Cash vs Current Debt, Adj. Debt-to-Equity, Preferred Stock, Retained Earnings Growth, Treasury Stock |
 | Cash Flow | CapEx Margin |
 
-### Intrinsic Value (Valuation Engine)
-Two independent models with live-adjustable assumptions:
+### Valuation Engine
+Four independent intrinsic-value models with live-adjustable assumptions:
+- **DCF Calculator** — 10-year free-cash-flow projection discounted at WACC + Gordon Growth terminal. Sliders for growth, discount, terminal rates.
+- **Graham Number** — `√(22.5 × EPS × BVPS)`.
+- **FCF Yield Valuation** — fair value from normalized FCF yield vs 10Y Treasury.
+- **Earnings Power Value (EPV)** — Bruce Greenwald's no-growth DCF variant.
 
-- **Graham Number** — `√(22.5 × EPS × Book Value per Share)`. Classic Ben Graham formula for the maximum price to pay for a quality stock.
-- **DCF Calculator** — 10-year free cash flow projection discounted at WACC, plus Gordon Growth terminal value. Sliders for growth rate, discount rate, and terminal rate update the result in real time.
-
-Both models display a **Margin of Safety** gauge and a price-vs-intrinsic-value bar.
+Plus **ROIC**, **Price-to-FCF**, a **Margin-of-Safety gauge**, and a **Circle of Competence** complexity flag.
 
 ### Competitive Moat Classification
-Automated Wide / Narrow / None moat rating based on gross margin, ROE, FCF yield, operating margins, and revenue growth. Each moat dimension is scored and the dominant type (Brand, Network Effect, Cost Advantage, etc.) is identified.
+Auto-classified Wide / Narrow / None rating across five moat types (Brand, Network Effect, Cost Advantage, Switching Costs, Efficient Scale), derived from gross margin, ROE, FCF yield, operating margins, and revenue growth.
 
 ### Extended Quote Data
-Beyond price and P/E, every analysis includes: **Sector / Industry**, **Forward P/E**, **PEG Ratio**, **EV/EBITDA**, **FCF Yield**, **ROE**, **ROA**, **Revenue Growth**, **Earnings Growth**, **Dividend Yield**, **52-Week Range**, and **Analyst Price Targets** — all sourced from Yahoo Finance with no API key required.
+Sector / Industry, Forward P/E, PEG, EV/EBITDA, FCF Yield, ROE, ROA, Revenue Growth, Earnings Growth, Dividend Yield, 52-Week Range, Analyst Price Targets — all from Yahoo Finance, no API key.
 
-### AI Investment Recommendation
-Click **Generate AI Investment Analysis** for a streaming, sector-aware recommendation structured as: Verdict (BUY / HOLD / AVOID) → Strengths → Concerns → Buffett Alignment → Modern Context. The prompt injects the company's business summary, all 14 weighted metrics, and modern valuation data for grounded, specific output.
+### Streaming AI Recommendation (current)
+Sector-aware, few-shot, structured output (Verdict / Strengths / Concerns / Buffett Alignment / Modern Context). Streams token-by-token over SSE from Groq LLaMA 3.3-70B. Prompt injects business summary, all 14 weighted metrics, modern valuation data, multi-year trends.
 
 ### RAG Chat Advisor
-Ask any investment question in natural language. Answers are grounded via FAISS vector search over a Buffett knowledge base and augmented with the current stock's ratio data, then streamed token-by-token from Groq LLaMA.
+Multi-turn chat grounded in a Buffett knowledge base via FAISS + sentence-transformers. Streams from Groq LLaMA 3.1-8B with full conversation history.
 
-### Financial Statements
-4 years of Income Statement, Balance Sheet, and Cash Flow data in collapsible tables with formatted values.
+### Watchlist & Multi-Market
+LocalStorage watchlist with add/remove and persistence. Currency symbols adapt per market (`$` US, `HK$` Hong Kong, `¥` A-shares).
 
-### Multi-Market Support
-Currency symbols are displayed correctly for each market — `$` for US stocks, `HK$` for Hong Kong, `¥` for A-shares, and so on.
+### Production-grade Backend Hygiene
+Async yfinance via `asyncio.to_thread`, `cachetools.TTLCache` (15-min quote / 30-min history), `slowapi` rate limiting per route, ticker input sanitization, configurable `ALLOWED_ORIGINS`, React Error Boundary.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 · TypeScript · Vite · Tailwind CSS · Recharts |
-| Backend | FastAPI · Python 3.11 · Uvicorn |
-| Financial Data | **yfinance** — no API key required |
-| AI / RAG | LangChain · FAISS · sentence-transformers · Groq API (LLaMA 3.1) |
-| Streaming | Server-Sent Events (SSE) |
-| Caching | `cachetools.TTLCache` — 15-min quote / 30-min history |
+| Layer | v0.4 (now) | v0.5 (target — see ROADMAP) |
+|---|---|---|
+| Frontend | React 18 · TypeScript · Vite · Tailwind · Recharts | + live agent trace panel, OAuth login |
+| Backend | FastAPI · async Python 3.11 · Uvicorn | + Celery/Arq workers, OTel middleware |
+| Persistence | `cachetools.TTLCache` (in-memory) · localStorage | PostgreSQL + pgvector · Redis |
+| Financial Data | yfinance — no API key | + SEC EDGAR pipeline · NewsAPI/Tavily |
+| LLM | Groq LLaMA 3.1-8B (chat) · LLaMA 3.3-70B (recs) | + Anthropic Claude (Haiku/Sonnet/Opus) with model routing + prompt caching |
+| Vector / RAG | FAISS + `all-MiniLM-L6-v2` (384-dim) | pgvector + voyage-3/text-embedding-3-small + cross-encoder reranker + GraphRAG |
+| Agent | Single-shot prompt | Self-authored harness + 5 subagents + MCP server |
+| Streaming | Server-Sent Events | SSE for tokens + agent step events |
+| Observability | — | Langfuse · OpenTelemetry · Prometheus · Grafana · Sentry |
+| Rate Limit | `slowapi` per-IP | `slowapi` per-user (Redis-backed) |
+| Eval | — | LLM-as-judge harness, golden set, CI regression |
+| Deployment | Local dev | Docker Compose · GitHub Actions CI · Fly.io / Railway |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-
 - Python 3.11
 - Node.js 18+
 - [Groq API key](https://console.groq.com) — free tier, no credit card
@@ -76,7 +99,7 @@ Currency symbols are displayed correctly for each market — `$` for US stocks, 
 ```bash
 cd backend
 python3.11 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -85,6 +108,8 @@ Create `backend/.env`:
 ```env
 GROQ_API_KEY=your_groq_key_here
 GROQ_MODEL=llama-3.1-8b-instant
+GROQ_RECOMMENDATION_MODEL=llama-3.3-70b-versatile
+ALLOWED_ORIGINS=http://localhost:5173
 ```
 
 ```bash
@@ -101,23 +126,25 @@ npm run dev
 # App: http://localhost:5173
 ```
 
-> The Vite dev server proxies `/api` requests to `localhost:8000` automatically.
+> Vite dev server proxies `/api` → `localhost:8000`.
 
 ---
 
-## API Endpoints
+## API Endpoints (v0.4)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/stock/{ticker}/quote` | Price, market cap, ROE, PEG, FCF yield, sector, currency… |
-| GET | `/api/stock/{ticker}/ratios` | 14 Buffett ratios + weighted score (0–100) |
-| GET | `/api/stock/{ticker}/financials` | Income statement, balance sheet, cash flow (4 yrs) |
-| GET | `/api/stock/{ticker}/history` | OHLCV price history (multiple periods + intervals) |
-| GET | `/api/stock/{ticker}/valuation` | Graham Number + DCF inputs |
-| GET | `/api/stock/{ticker}/moat` | Competitive moat strength + type classification |
-| POST | `/api/stock/recommendation` | SSE — streaming AI investment recommendation |
-| POST | `/api/chat` | SSE — streaming RAG chat with stock context |
+| Method | Endpoint | Rate Limit | Description |
+|---|---|---|---|
+| GET | `/api/health` | — | Health check |
+| GET | `/api/stock/{ticker}/quote` | 30/min | Price, market cap, ROE, PEG, FCF yield, sector, currency… |
+| GET | `/api/stock/{ticker}/ratios` | 20/min | 14 Buffett ratios + weighted score + trend adjustment |
+| GET | `/api/stock/{ticker}/financials` | 20/min | Income / Balance / Cash Flow (4 yrs) |
+| GET | `/api/stock/{ticker}/history` | 20/min | OHLCV history (period: `1d`/`5d`/`1mo`/`3mo`/`6mo`/`1y`/`2y`/`5y`) |
+| GET | `/api/stock/{ticker}/valuation` | 20/min | DCF + Graham + FCF Yield Value + EPV + ROIC |
+| GET | `/api/stock/{ticker}/moat` | 20/min | Moat strength + dominant type |
+| POST | `/api/stock/recommendation` | 5/min | SSE — streaming AI investment recommendation |
+| POST | `/api/chat` | — | SSE — streaming RAG chat with stock context + history |
+
+v0.5 will add: `/api/agent/run` (start a research run), `/api/agent/{run_id}` (stream steps + final report), `/api/auth/*` (OAuth), and MCP `stdio` / `streamable-http` transports.
 
 ---
 
@@ -127,12 +154,12 @@ Each metric carries a weight reflecting its importance. The score is normalized 
 
 ```
 Score = Σ(weight_i  where passes == True)
-        ─────────────────────────────────── × 100
+        ─────────────────────────────────── × 100   +   trend_adjustment ∈ [−10, +10]
         Σ(weight_i  where passes != None)
 ```
 
 | Weight | Metrics |
-|--------|---------|
+|---|---|
 | 13% | Gross Margin |
 | 11% | Net Profit Margin |
 | 10% | EPS Growth |
@@ -146,57 +173,58 @@ Score = Σ(weight_i  where passes == True)
 
 ---
 
-## Project Structure
+## Project Structure (v0.4)
 
 ```
-buffett-analyzer/
+DeepValue/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                  # FastAPI entry, CORS, lifespan (FAISS init)
-│   │   ├── config.py                # Env vars
+│   │   ├── main.py                      # FastAPI entry · CORS · slowapi · lifespan (FAISS init)
+│   │   ├── config.py                    # Env vars, ALLOWED_ORIGINS
+│   │   ├── limiter.py                   # slowapi Limiter instance
 │   │   ├── api/routes/
-│   │   │   ├── stock.py             # Quote / financials / ratios / valuation / moat / history
-│   │   │   └── chat.py              # SSE streaming chat
+│   │   │   ├── stock.py                 # quote · ratios · financials · history · valuation · moat · recommendation
+│   │   │   └── chat.py                  # SSE streaming chat with history
 │   │   ├── services/
-│   │   │   ├── financial.py         # yfinance wrapper + TTLCache
-│   │   │   ├── buffett.py           # 14 ratio calculations + weighted score
-│   │   │   ├── valuation.py         # Graham Number + DCF intrinsic value
-│   │   │   ├── moat.py              # Competitive moat classification
-│   │   │   └── rag.py               # FAISS index, retrieval, Groq streaming
+│   │   │   ├── financial.py             # async yfinance + cachetools.TTLCache
+│   │   │   ├── buffett.py               # 14 ratios + sector-aware thresholds + trend adjustment
+│   │   │   ├── valuation.py             # DCF / Graham / FCF Yield Value / EPV / ROIC / P-FCF
+│   │   │   ├── moat.py                  # Competitive moat classification
+│   │   │   └── rag.py                   # FAISS, retrieval, Groq streaming (chat + recommendation)
 │   │   └── data/
-│   │       └── buffett_knowledge.txt
+│   │       ├── buffett_knowledge.txt
+│   │       └── faiss_index/             # auto-generated
 │   ├── requirements.txt
 │   └── .env.example
 └── frontend/
     └── src/
-        ├── api/client.ts
-        ├── context/StockContext.tsx
+        ├── App.tsx                      # Root: Header + Sidebar + Dashboard + ChatDrawer
+        ├── api/client.ts                # fetchQuote/Ratios/Financials/Valuation/Moat/History · streamChat/Recommendation
+        ├── context/
+        │   ├── StockContext.tsx         # ticker, quote, ratios, valuation, moat, recommendation
+        │   └── WatchlistContext.tsx     # localStorage-backed watchlist
         ├── types/index.ts
-        ├── utils/currency.ts            # Currency symbol helper (USD/HKD/CNY…)
+        ├── utils/currency.ts            # Multi-market currency symbol helper
         └── components/
-            ├── Header.tsx
-            ├── StockSearch.tsx
+            ├── Header.tsx · StockSearch.tsx · Sidebar.tsx · ErrorBoundary.tsx · ChatDrawer.tsx
             ├── Dashboard/
-            │   ├── index.tsx            # Tabs: Ratios | Chart | Valuation | Statements | AI
-            │   ├── StockOverview.tsx    # Price + extended stats + analyst targets
-            │   ├── RatioTable.tsx       # Score ring + grouped ratio cards
-            │   ├── RatioChart.tsx       # Pass/fail bar chart
-            │   ├── PriceHistoryChart.tsx # Area chart with period selector
-            │   ├── ValuationPanel.tsx   # Graham Number + DCF calculator
-            │   ├── MoatCard.tsx         # Moat strength + dimension scores
-            │   ├── StatementTable.tsx   # Collapsible financial tables
-            │   └── AIRecommendation.tsx # Score gauge + streaming AI analysis
+            │   ├── index.tsx            # Tabs: Ratios | Chart | Valuation | Moat | Statements | Watchlist | AI
+            │   ├── StockOverview.tsx · RatioTable.tsx · RatioChart.tsx
+            │   ├── PriceHistoryChart.tsx · ValuationPanel.tsx · MoatCard.tsx
+            │   ├── StatementTable.tsx · Watchlist.tsx · AIRecommendation.tsx
             └── Chatbot/
                 └── ChatWindow.tsx
 ```
+
+For the v0.5 target structure (agent harness + multi-agent + MCP server + workers + observability), see [ARCHITECTURE.md](./ARCHITECTURE.md#target-architecture-v05).
 
 ---
 
 ## Supported Tickers
 
-Any ticker supported by Yahoo Finance, including:
+Any ticker supported by Yahoo Finance:
 
-- **US stocks**: `AAPL`, `MSFT`, `KO`, `BRK-B`, `NVDA`
+- **US**: `AAPL`, `MSFT`, `KO`, `BRK-B`, `NVDA`
 - **Hong Kong**: `0700.HK` (Tencent), `9988.HK` (Alibaba)
 - **A-shares**: `600519.SS` (Kweichow Moutai), `000858.SZ` (Wuliangye)
 
@@ -204,13 +232,12 @@ Any ticker supported by Yahoo Finance, including:
 
 ## Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for the full feature roadmap and known technical debt backlog.
+See [ROADMAP.md](./ROADMAP.md) for the full 16-week build plan. Headline items:
 
-Key upcoming items:
-- Stock screener with batch Buffett scoring
-- Upgrade recommendation model to LLaMA 70B
-- Multi-turn conversation history in chat
-- Portfolio-level analysis across multiple tickers
+- **Phase 7 (weeks 1–6) — Agent System & Harness:** self-authored harness, 5 subagents, MCP server, model routing, streaming agent traces
+- **Phase 8 (weeks 7–10) — Enterprise Infrastructure:** PostgreSQL + pgvector + Redis + Celery, OAuth + multi-tenancy, Langfuse + OTel + Prometheus + Sentry, Docker + GitHub Actions CI
+- **Phase 9 (weeks 11–14) — Advanced RAG + Eval Harness:** SEC EDGAR pipeline, hybrid + contextual + GraphRAG, LLM-as-judge in CI, golden dataset
+- **Phase 10 (weeks 15–16) — Launch:** public deploy, blog post, open-source `deepvalue-harness`, collected resume metrics
 
 ---
 
