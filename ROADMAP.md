@@ -247,7 +247,7 @@
 - [x] **Tool registry** — Pydantic-typed tool definitions, JSON schema auto-generated for the LLM, runtime arg validation
 - [x] **Tool dispatcher** — async tool execution, parallel tool calls in one turn, per-tool timeout, retry with exponential backoff
 - [x] **Tool sandbox** — each tool runs in a bounded `asyncio.Task` with `wait_for` timeout; failures encoded in `ToolResult.error` and never crash the loop
-- [ ] **Structured output enforcement** — auto-repair loop on Pydantic parse failure (args validation done; output-shape repair pending)
+- [x] **Structured output enforcement** — `AgentRunner(output_schema=...)` adds a system-prompt JSON Schema hint; on a no-tool-call turn the runner parses + validates the final text, and on failure emits a `REPAIR` step + retries up to `max_repairs` (default 2). Tolerates ```json fences. `AgentRun.structured_output` carries the parsed dict.
 - [ ] **Persistent agent state** — every step written to Postgres `agent_runs` + `agent_steps` tables (Phase 8 dependency)
 - [ ] **Resumable execution** — `resume(run_id)` picks up from last persisted step
 - [x] **Token / cost accounting** — every LLM call records `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `model`, `latency_ms` (per-model price table in `llm.py`)
@@ -466,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-12 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools: quote, score, valuation, moat, price history, technicals)*
+*Last updated: 2026-05-12 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools + structured-output enforcement)*

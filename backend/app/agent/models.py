@@ -49,6 +49,7 @@ class StepKind(str, Enum):
     TOOL_BATCH = "tool_batch"    # parallel dispatch of one or more tools
     FINAL      = "final"         # terminal answer
     ERROR      = "error"         # unrecoverable failure
+    REPAIR     = "repair"        # corrective user message after structured-output parse failure
 
 
 class AgentStep(BaseModel):
@@ -85,6 +86,7 @@ class AgentRun(BaseModel):
 
     steps:      list[AgentStep] = Field(default_factory=list)
     final_text: Optional[str] = None
+    structured_output: Optional[dict[str, Any]] = None   # populated when output_schema is set
 
     total_cost_usd:   float = 0.0
     total_latency_ms: int = 0

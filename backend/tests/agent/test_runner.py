@@ -173,3 +173,83 @@ async def test_stream_yields_error_step_on_llm_failure():
     async for step, _ in runner.stream("query"):
         steps.append(step)
     assert steps[-1].kind == StepKind.ERROR
+
+
+# ── structured output ─────────────────────────────────────────────────────────
+
+class _Verdict(BaseModel):
+    ticker:  str
+    verdict: str
+    score:   int
+
+
+def _build_structured(turns, *, max_repairs=2, max_iters=6):
+    registry = ToolRegistry()
+    return AgentRunner(
+        llm=_ScriptedLLM(turns=turns),
+        registry=registry,
+        dispatcher=ToolDispatcher(registry),
+        system="sys",
+        max_iters=max_iters,
+        output_schema=_Verdict,
+        max_repairs=max_repairs,
+    )
+
+
+async def test_structured_happy_path_populates_structured_output():
+    payload = '{"ticker": "AAPL", "verdict": "buy", "score": 82}'
+    runner = _build_structured([_final_turn(payload)])
+    run = await runner.run("q")
+    assert run.status == AgentRunStatus.COMPLETED
+    assert run.structured_output == {"ticker": "AAPL", "verdict": "buy", "score": 82}
+    assert run.final_text == payload
+
+
+async def test_structured_invalid_then_valid_emits_repair_step():
+    bad = "not even close to JSON"
+    good = '{"ticker": "MSFT", "verdict": "hold", "score": 60}'
+    runner = _build_structured([_final_turn(bad), _final_turn(good)])
+    run = await runner.run("q")
+    assert run.status == AgentRunStatus.COMPLETED
+    assert run.structured_output == {"ticker": "MSFT", "verdict": "hold", "score": 60}
+    kinds = [s.kind for s in run.steps]
+    # LLM(bad) → REPAIR → LLM(good) → FINAL
+    assert kinds == [StepKind.LLM, StepKind.REPAIR, StepKind.LLM, StepKind.FINAL]
+    repair = next(s for s in run.steps if s.kind == StepKind.REPAIR)
+    assert repair.error and "JSON" in repair.error
+
+
+async def test_structured_exhausts_repairs_then_fails():
+    bad = "still not JSON"
+    # max_repairs=1 → 1 failed attempt + 1 repair attempt = 2 LLM turns before giving up
+    runner = _build_structured(
+        [_final_turn(bad), _final_turn(bad), _final_turn(bad)],
+        max_repairs=1,
+    )
+    run = await runner.run("q")
+    assert run.status == AgentRunStatus.FAILED
+    assert run.structured_output is None
+    assert run.error and "repair attempts" in run.error
+    assert run.steps[-1].kind == StepKind.ERROR
+    assert sum(1 for s in run.steps if s.kind == StepKind.REPAIR) == 1
+
+
+async def test_structured_schema_mismatch_triggers_repair():
+    # Valid JSON but schema mismatch (score is wrong type) → repair, then good.
+    bad = '{"ticker": "NVDA", "verdict": "buy", "score": "high"}'
+    good = '{"ticker": "NVDA", "verdict": "buy", "score": 91}'
+    runner = _build_structured([_final_turn(bad), _final_turn(good)])
+    run = await runner.run("q")
+    assert run.status == AgentRunStatus.COMPLETED
+    assert run.structured_output["score"] == 91
+    repair = next(s for s in run.steps if s.kind == StepKind.REPAIR)
+    assert "schema" in (repair.error or "").lower()
+
+
+async def test_no_schema_keeps_structured_output_none():
+    # Baseline: existing behaviour unchanged when no output_schema is set.
+    runner = _build([_final_turn("free-form prose")])
+    run = await runner.run("q")
+    assert run.status == AgentRunStatus.COMPLETED
+    assert run.structured_output is None
+    assert run.final_text == "free-form prose"
