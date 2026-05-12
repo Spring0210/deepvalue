@@ -6,12 +6,10 @@
 
 Persistence + resume come in Phase 8 (Postgres-backed agent_runs / agent_steps)."""
 
-from __future__ import annotations
-
 import json
 from typing import AsyncIterator, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -65,13 +63,13 @@ class AgentRunRequest(BaseModel):
 
 @router.post("/run", response_model=AgentRun)
 @limiter.limit("5/minute")
-async def run_agent(request: Request, req: AgentRunRequest) -> AgentRun:
+async def run_agent(request: Request, req: AgentRunRequest = Body(...)) -> AgentRun:
     return await _make_runner().run(req.query, model=req.model)
 
 
 @router.post("/stream")
 @limiter.limit("5/minute")
-async def stream_agent(request: Request, req: AgentRunRequest) -> StreamingResponse:
+async def stream_agent(request: Request, req: AgentRunRequest = Body(...)) -> StreamingResponse:
     runner = _make_runner()
 
     async def event_source() -> AsyncIterator[bytes]:

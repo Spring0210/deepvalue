@@ -128,7 +128,7 @@ export async function streamAgent(
     let detail = `HTTP ${response.status}`
     try {
       const body = await response.json()
-      if (body?.detail) detail = body.detail
+      if (body?.detail) detail = _stringifyDetail(body.detail)
     } catch { /* ignore */ }
     onError(detail)
     return
@@ -140,6 +140,23 @@ export async function streamAgent(
     )
     else                         onStep(data as AgentStep)
   })
+}
+
+/** FastAPI/Pydantic v2 422 detail is an array of `{type,loc,msg,input}`; 503/429
+ *  detail is a plain string. Reduce anything to a single readable string. */
+function _stringifyDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail
+      .map(d => {
+        if (typeof d === 'string') return d
+        const obj = d as { msg?: string; loc?: unknown[] }
+        const loc = Array.isArray(obj?.loc) ? obj.loc.join('.') : ''
+        return obj?.msg ? (loc ? `${loc}: ${obj.msg}` : obj.msg) : JSON.stringify(d)
+      })
+      .join('; ')
+  }
+  try { return JSON.stringify(detail) } catch { return String(detail) }
 }
 
 async function _readEventSSE(
