@@ -237,19 +237,21 @@
 - 100% of agent runs traceable end-to-end (every step recorded)
 - Resumable: any agent run can be interrupted and resumed from checkpoint
 
+**Status (2026-05-12):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Next: agent UI (live trace panel), Postgres persistence, multi-agent orchestration.
+
 ### 7.1 Agent Harness (self-authored, no LangGraph)
 
 > Build it yourself. LangGraph hides the parts that interviewers want you to explain.
 
-- [ ] **`AgentRunner` core loop** — plan → act → observe → reflect, with explicit state machine
-- [ ] **Tool registry** — Pydantic-typed tool definitions, JSON schema auto-generated for the LLM, runtime arg validation
-- [ ] **Tool dispatcher** — async tool execution, parallel tool calls in one turn, per-tool timeout, retry with exponential backoff
-- [ ] **Tool sandbox** — each tool runs in a bounded `asyncio.Task` with timeout + memory cap; failures don't crash the loop
-- [ ] **Structured output enforcement** — all agent responses parsed against Pydantic schemas; auto-repair loop on parse failure
-- [ ] **Persistent agent state** — every step (thought, tool_call, tool_result, observation) written to Postgres `agent_runs` + `agent_steps` tables
+- [x] **`AgentRunner` core loop** — plan → act → observe; reflect pass deferred to 7.2
+- [x] **Tool registry** — Pydantic-typed tool definitions, JSON schema auto-generated for the LLM, runtime arg validation
+- [x] **Tool dispatcher** — async tool execution, parallel tool calls in one turn, per-tool timeout, retry with exponential backoff
+- [x] **Tool sandbox** — each tool runs in a bounded `asyncio.Task` with `wait_for` timeout; failures encoded in `ToolResult.error` and never crash the loop
+- [ ] **Structured output enforcement** — auto-repair loop on Pydantic parse failure (args validation done; output-shape repair pending)
+- [ ] **Persistent agent state** — every step written to Postgres `agent_runs` + `agent_steps` tables (Phase 8 dependency)
 - [ ] **Resumable execution** — `resume(run_id)` picks up from last persisted step
-- [ ] **Token / cost accounting** — every LLM call records `input_tokens`, `output_tokens`, `cached_tokens`, `cost_usd`, `model`, `latency_ms`
-- [ ] **Streaming traces** — SSE channel emits each step as it happens (`{"type":"tool_call","name":"get_news",...}`) for the UI
+- [x] **Token / cost accounting** — every LLM call records `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `model`, `latency_ms` (per-model price table in `llm.py`)
+- [x] **Streaming traces** — SSE channel emits each step as it happens (`{"type":"tool_call","name":"get_news",...}`) for the UI. `runner.stream()` async generator + `POST /api/agent/stream` endpoint shipped; events: `llm`, `tool_batch`, `final`, `error`, `done`.
 
 ### 7.2 Multi-Agent Orchestration
 
@@ -264,12 +266,13 @@
 
 ### 7.3 Tool Library (called by all subagents)
 
-- [ ] `get_stock_quote` — live price, volume, 52w range
-- [ ] `get_buffett_score` — full 14-ratio breakdown
-- [ ] `get_valuation` — DCF / Graham / EPV with adjustable assumptions
-- [ ] `get_moat` — moat type + strength
+- [x] `get_stock_quote` — live price, sector/industry, key ratios, 52w range
+- [x] `get_buffett_score` — full 14-ratio breakdown + sector-adjusted thresholds + trend adjustment
+- [x] `get_valuation` — DCF / Graham / EPV / FCF-yield / Margin-of-Safety / ROIC / Price-to-FCF / Circle-of-Competence
+- [x] `get_moat` — moat type + Wide/Narrow/None strength + per-dimension scores + supporting indicators
+- [x] `get_price_history` — period summary (start/latest/high/low, total return %, drawdown from high) for 1mo–max
 - [ ] `get_news` — last N days + sentiment
-- [ ] `get_technicals` — RSI, MACD, MAs, volatility
+- [x] `get_technicals` — RSI(14), MACD(12/26/9), SMA-50/200, price-vs-MA %, 30d annualized volatility
 - [ ] `get_peer_comparison` — auto-pick 3-5 sector peers, compare key ratios
 - [ ] `search_filings` — hybrid RAG over SEC 10-K/10-Q (delivered in Phase 9)
 - [ ] `get_prior_analysis` — recall past agent runs for the same ticker
@@ -463,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-11 · v0.5 (renamed DeepValue Agent, AI-native pivot)*
+*Last updated: 2026-05-12 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools: quote, score, valuation, moat, price history, technicals)*

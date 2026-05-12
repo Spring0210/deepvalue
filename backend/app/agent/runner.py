@@ -19,7 +19,7 @@ Hard cap on iterations so a broken model can't burn the budget."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncIterator
 
 from app.agent.llm import AnthropicClient, LLMTurn
 from app.agent.models import (
@@ -51,7 +51,24 @@ class AgentRunner:
 
     async def run(self, query: str, *, model: str | None = None) -> AgentRun:
         run = AgentRun(query=query)
-        messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
+        async for _ in self._drive(run, model=model):
+            pass
+        return run
+
+    async def stream(
+        self, query: str, *, model: str | None = None,
+    ) -> AsyncIterator[tuple[AgentStep, AgentRun]]:
+        """Yield (step, run-snapshot) tuples as each step lands. The final
+        yield is the terminal FINAL or ERROR step; callers can read
+        `run.status` / `run.final_text` from the snapshot to know we're done."""
+        run = AgentRun(query=query)
+        async for step in self._drive(run, model=model):
+            yield step, run
+
+    async def _drive(
+        self, run: AgentRun, *, model: str | None = None,
+    ) -> AsyncIterator[AgentStep]:
+        messages: list[dict[str, Any]] = [{"role": "user", "content": run.query}]
         tool_schemas = self._registry.anthropic_schemas()
 
         for step_idx in range(self._max_iters):
@@ -63,17 +80,21 @@ class AgentRunner:
                     model=model,
                 )
             except Exception as exc:                                  # noqa: BLE001
-                run.append(AgentStep(
+                err_step = AgentStep(
                     idx=step_idx, kind=StepKind.ERROR,
                     error=f"{type(exc).__name__}: {exc}",
-                ))
+                )
+                run.append(err_step)
                 run.finish(AgentRunStatus.FAILED, error=str(exc))
-                return run
+                yield err_step
+                return
 
-            run.append(AgentStep(
+            llm_step = AgentStep(
                 idx=step_idx, kind=StepKind.LLM,
                 text=turn.text, tool_calls=turn.tool_calls, usage=turn.usage,
-            ))
+            )
+            run.append(llm_step)
+            yield llm_step
 
             # Always echo the assistant turn back into history so tool_use ids match.
             messages.append({"role": "assistant", "content": turn.raw_assistant_blocks})
@@ -81,14 +102,18 @@ class AgentRunner:
             # Terminal: no tools requested → final answer.
             if not turn.tool_calls:
                 final = turn.text or ""
-                run.append(AgentStep(idx=step_idx + 1, kind=StepKind.FINAL, text=final))
+                final_step = AgentStep(idx=step_idx + 1, kind=StepKind.FINAL, text=final)
+                run.append(final_step)
                 run.finish(AgentRunStatus.COMPLETED, final_text=final)
-                return run
+                yield final_step
+                return
 
             results = await self._dispatcher.dispatch_many(turn.tool_calls)
-            run.append(AgentStep(
+            tool_step = AgentStep(
                 idx=step_idx + 1, kind=StepKind.TOOL_BATCH, tool_results=results,
-            ))
+            )
+            run.append(tool_step)
+            yield tool_step
 
             messages.append({
                 "role":    "user",
@@ -100,12 +125,16 @@ class AgentRunner:
             (s.text for s in reversed(run.steps) if s.kind == StepKind.LLM and s.text),
             None,
         )
+        cap_step = AgentStep(
+            idx=len(run.steps), kind=StepKind.FINAL, text=last_text,
+        )
+        run.append(cap_step)
         run.finish(
             AgentRunStatus.CAPPED,
             final_text=last_text,
             error=f"Hit max_iters={self._max_iters} without end_turn.",
         )
-        return run
+        yield cap_step
 
 
 def _tool_result_block(result: ToolResult) -> dict[str, Any]:
