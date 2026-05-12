@@ -7,6 +7,11 @@ GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 GROQ_RECOMMENDATION_MODEL: str = os.getenv("GROQ_RECOMMENDATION_MODEL", "llama-3.3-70b-versatile")
 
+# Anthropic Claude — powers the v0.5 agent harness.
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL:   str = os.getenv("ANTHROPIC_MODEL",   "claude-sonnet-4-5")
+AGENT_MAX_ITERS:   int = int(os.getenv("AGENT_MAX_ITERS", "8"))
+
 # Comma-separated list of allowed CORS origins.
 # Falls back to localhost dev server if not set.
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
@@ -14,3 +19,5 @@ ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.st
 
 if not GROQ_API_KEY:
     print("WARNING: GROQ_API_KEY is not set. Chat functionality will not work.")
+if not ANTHROPIC_API_KEY:
+    print("WARNING: ANTHROPIC_API_KEY is not set. /api/agent/* endpoints will return 503.")

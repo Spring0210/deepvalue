@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from app.api.routes import stock, chat
+from app.api.routes import stock, chat, agent
 from app.services.rag import init_rag
 from app.config import ALLOWED_ORIGINS
 from app.limiter import limiter
@@ -36,6 +36,7 @@ app.add_middleware(
 
 app.include_router(stock.router, prefix="/api/stock", tags=["stock"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 
 
 @app.get("/api/health", tags=["health"])
