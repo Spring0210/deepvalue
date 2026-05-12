@@ -237,7 +237,7 @@
 - 100% of agent runs traceable end-to-end (every step recorded)
 - Resumable: any agent run can be interrupted and resumed from checkpoint
 
-**Status (2026-05-12):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Next: agent UI (live trace panel), Postgres persistence, multi-agent orchestration.
+**Status (2026-05-12):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Structured-output enforcement (parse + auto-repair loop) added. Live trace UI shipped (`Agent` sidebar section, SSE-driven). Next: Postgres persistence, multi-agent orchestration.
 
 ### 7.1 Agent Harness (self-authored, no LangGraph)
 
@@ -296,8 +296,8 @@
 
 ### 7.6 Agent UI
 
-- [ ] Natural-language entry: *"Should I buy Google?"*, *"Compare AAPL vs MSFT in services revenue growth"*
-- [ ] **Live trace panel** — streams each tool call, args, result preview, latency, cost (Anthropic Console-style)
+- [x] Natural-language entry: new `Agent` sidebar section (`AgentPanel.tsx`) with a query textarea + ⌘/Ctrl+Enter to run, posts to `/api/agent/stream`.
+- [x] **Live trace panel** — streams each step (LLM / TOOL_BATCH / REPAIR / FINAL / ERROR) as cards. Tool results show ok/fail icon, latency, attempt count, expandable JSON preview. LLM cards show usage (tokens, cost, latency). Footer summary shows status + total steps + wall-clock + total cost + token totals. Abortable mid-run via Stop button (AbortController).
 - [ ] **Final report** — structured sections: Summary · Fundamentals · Valuation · News · Technicals · Risks · Verdict
 - [ ] **Sources** — every claim links back to its tool call or filing chunk
 - [ ] PDF export of the agent report

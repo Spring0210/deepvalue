@@ -1,5 +1,8 @@
 import axios from 'axios'
-import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult, PriceHistory } from '../types'
+import type {
+  BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult, PriceHistory,
+  AgentStep, AgentRunSummary,
+} from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -97,4 +100,78 @@ async function _readSSE(
     }
   }
   onDone()
+}
+
+// ── Agent SSE (event-typed: event: <name>\ndata: <json>\n\n) ─────────────────
+
+export async function streamAgent(
+  query: string,
+  onStep:  (step: AgentStep) => void,
+  onDone:  (summary: AgentRunSummary) => void,
+  onError: (message: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch('/api/agent/stream', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ query }),
+      signal,
+    })
+  } catch (err) {
+    if ((err as { name?: string })?.name === 'AbortError') return
+    onError((err as Error).message || 'Network error')
+    return
+  }
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = await response.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore */ }
+    onError(detail)
+    return
+  }
+  await _readEventSSE(response, (event, data) => {
+    if (event === 'done')        onDone(data as AgentRunSummary)
+    else if (event === 'error')  onError(
+      ((data as { error?: string })?.error) || 'Unknown agent error',
+    )
+    else                         onStep(data as AgentStep)
+  })
+}
+
+async function _readEventSSE(
+  response: Response,
+  onEvent:  (event: string, data: unknown) => void,
+): Promise<void> {
+  const reader = response.body?.getReader()
+  const decoder = new TextDecoder()
+  if (!reader) return
+
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let sep = buffer.indexOf('\n\n')
+    while (sep !== -1) {
+      const block = buffer.slice(0, sep)
+      buffer = buffer.slice(sep + 2)
+      sep = buffer.indexOf('\n\n')
+
+      let eventName  = 'message'
+      const dataLines: string[] = []
+      for (const line of block.split('\n')) {
+        if      (line.startsWith('event: ')) eventName = line.slice(7).trim()
+        else if (line.startsWith('data: '))  dataLines.push(line.slice(6))
+      }
+      if (dataLines.length === 0) continue
+      try {
+        onEvent(eventName, JSON.parse(dataLines.join('\n')))
+      } catch { /* drop malformed event */ }
+    }
+  }
 }

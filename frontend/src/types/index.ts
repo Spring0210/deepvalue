@@ -96,10 +96,62 @@ export interface MoatResult {
   indicators: string[]
 }
 
-export type Section = 'ratios' | 'chart' | 'valuation' | 'statements' | 'ai' | 'watchlist'
+export type Section = 'ratios' | 'chart' | 'valuation' | 'statements' | 'ai' | 'watchlist' | 'agent'
 
 export interface Message {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+}
+
+// ── Agent harness wire types (mirror app/agent/models.py) ────────────────────
+
+export type AgentStepKind = 'llm' | 'tool_batch' | 'final' | 'error' | 'repair'
+
+export interface AgentToolCall {
+  id:   string
+  name: string
+  args: Record<string, unknown>
+}
+
+export interface AgentToolResult {
+  call_id:    string
+  name:       string
+  ok:         boolean
+  output?:    unknown
+  error?:     string | null
+  latency_ms: number
+  attempts:   number
+}
+
+export interface AgentLLMUsage {
+  model:              string
+  input_tokens:       number
+  output_tokens:      number
+  cache_read_tokens:  number
+  cache_write_tokens: number
+  cost_usd:           number
+  latency_ms:         number
+}
+
+export interface AgentStep {
+  idx:          number
+  kind:         AgentStepKind
+  started_at:   number
+  text?:        string | null
+  tool_calls:   AgentToolCall[]
+  usage?:       AgentLLMUsage | null
+  tool_results: AgentToolResult[]
+  error?:       string | null
+}
+
+export interface AgentRunSummary {
+  id:                  string
+  status:              'running' | 'completed' | 'failed' | 'capped'
+  final_text:          string | null
+  total_cost_usd:      number
+  total_latency_ms:    number
+  total_input_tokens:  number
+  total_output_tokens: number
+  error:               string | null
 }

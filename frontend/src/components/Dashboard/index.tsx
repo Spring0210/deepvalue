@@ -7,6 +7,7 @@ import StockOverview from './StockOverview'
 import AIRecommendation from './AIRecommendation'
 import ValuationPanel from './ValuationPanel'
 import Watchlist from './Watchlist'
+import AgentPanel from './AgentPanel'
 import type { Section } from '../../types'
 
 const SECTION_LABELS: Record<Section, string> = {
@@ -15,6 +16,7 @@ const SECTION_LABELS: Record<Section, string> = {
   valuation:  'Valuation Models',
   statements: 'Financial Statements',
   ai:         'AI Investment Analysis',
+  agent:      'Multi-Agent Research',
   watchlist:  'Watchlist',
 }
 
@@ -32,6 +34,23 @@ interface Props { section: Section; onNavigate: (s: Section) => void }
 
 export default function Dashboard({ section, onNavigate }: Props) {
   const { ticker, quote, ratios, weightedScore, financials, moat, loading, error } = useStock()
+
+  // Agent panel is global — it doesn't require a loaded ticker.
+  if (section === 'agent') {
+    return (
+      <div className="p-4">
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: '#2C2C2E', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+            <SectionHeader section={section} />
+          </div>
+          <div className="p-4">
+            <AgentPanel />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // Full-screen loader only on first search (no data yet)
   if (loading && !ticker) {

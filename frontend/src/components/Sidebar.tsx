@@ -69,6 +69,20 @@ function WatchlistIcon() {
   )
 }
 
+function AgentIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5"  cy="5"  r="2"/>
+      <circle cx="19" cy="5"  r="2"/>
+      <circle cx="12" cy="19" r="2"/>
+      <line x1="7"    y1="5"    x2="17"   y2="5"/>
+      <line x1="6.5"  y1="6.5"  x2="10.5" y2="17.5"/>
+      <line x1="17.5" y1="6.5"  x2="13.5" y2="17.5"/>
+    </svg>
+  )
+}
+
 function ChatIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -140,6 +154,7 @@ const NAV: { id: Section; label: string; icon: () => React.ReactNode }[] = [
   { id: 'valuation',  label: 'Valuation',   icon: ValuationIcon },
   { id: 'statements', label: 'Statements',  icon: TableIcon     },
   { id: 'ai',         label: 'AI Pick',     icon: AIIcon        },
+  { id: 'agent',      label: 'Agent',       icon: AgentIcon     },
   { id: 'watchlist',  label: 'Watchlist',   icon: WatchlistIcon },
 ]
 
