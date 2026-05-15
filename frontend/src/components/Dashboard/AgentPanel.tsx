@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { streamAgent } from '../../api/client'
 import type { AgentRunSummary, AgentStep, AgentToolCall, AgentToolResult } from '../../types'
@@ -132,7 +133,7 @@ function StepCard({ step }: { step: AgentStep }) {
 }
 
 function StepFrame({ kind, accent, children }: {
-  kind: string; accent: string; children: React.ReactNode
+  kind: string; accent: string; children: ReactNode
 }) {
   return (
     <div className="rounded-xl p-3 text-sm"
@@ -248,12 +249,92 @@ function FinalStepCard({ step }: { step: AgentStep }) {
           Final
         </span>
       </div>
-      <p className="text-[13px] leading-relaxed whitespace-pre-wrap"
-        style={{ color: '#F5F5F7' }}>
-        {step.text || '(empty)'}
-      </p>
+      {step.text
+        ? <MarkdownLite text={step.text} />
+        : <p className="text-[13px]" style={{ color: 'rgba(235,235,245,0.5)' }}>(empty)</p>}
     </div>
   )
+}
+
+// Tiny markdown renderer for the orchestrator's final answer.
+// The agent's output shape is fixed by the system prompt — `##`/`###`
+// headings, `**bold**` for key numbers, `- ` bullets, blank-line paragraphs.
+// A 30-line hand-rolled parser beats pulling in react-markdown + remark + rehype.
+function MarkdownLite({ text }: { text: string }) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  const nodes: ReactNode[] = []
+  let bullets: string[] = []
+  let paragraph: string[] = []
+
+  const flushBullets = () => {
+    if (!bullets.length) return
+    nodes.push(
+      <ul key={`ul-${nodes.length}`} className="list-disc ml-5 space-y-1 mb-2 text-[13px] leading-relaxed"
+        style={{ color: '#F5F5F7' }}>
+        {bullets.map((b, i) => <li key={i}>{renderInline(b)}</li>)}
+      </ul>
+    )
+    bullets = []
+  }
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    nodes.push(
+      <p key={`p-${nodes.length}`} className="text-[13px] leading-relaxed mb-2"
+        style={{ color: '#F5F5F7' }}>
+        {renderInline(paragraph.join(' '))}
+      </p>
+    )
+    paragraph = []
+  }
+  const flushAll = () => { flushBullets(); flushParagraph() }
+
+  for (const raw of lines) {
+    const line = raw.trim()
+
+    if (!line || /^-{3,}$/.test(line)) { flushAll(); continue }
+
+    const h2 = line.match(/^##\s+(.+?)\s*$/)
+    const h3 = line.match(/^###\s+(.+?)\s*$/)
+    if (h2 || h3) {
+      flushAll()
+      const heading = (h2?.[1] ?? h3?.[1] ?? '').replace(/\*\*/g, '')
+      const isTop = !!h2
+      nodes.push(
+        <h3 key={`h-${nodes.length}`}
+          className={isTop ? 'text-[12px] font-bold uppercase tracking-wider mt-3 mb-1.5'
+                           : 'text-[12px] font-semibold mt-2 mb-1'}
+          style={{ color: isTop ? '#30D158' : 'rgba(235,235,245,0.85)' }}>
+          {heading}
+        </h3>
+      )
+      continue
+    }
+
+    const bullet = line.match(/^[-*]\s+(.+)$/)
+    if (bullet) { flushParagraph(); bullets.push(bullet[1]); continue }
+
+    flushBullets()
+    paragraph.push(line)
+  }
+  flushAll()
+
+  return <div>{nodes}</div>
+}
+
+// Inline: **bold** segments. Everything else is plain text.
+function renderInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = []
+  const regex = /\*\*([^*]+)\*\*/g
+  let lastIdx = 0
+  let m: RegExpExecArray | null
+  let key = 0
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index))
+    parts.push(<strong key={key++} style={{ color: '#FFFFFF' }}>{m[1]}</strong>)
+    lastIdx = m.index + m[0].length
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx))
+  return parts
 }
 
 function ErrorStepCard({ step }: { step: AgentStep }) {
