@@ -102,7 +102,7 @@
 - [x] Multi-year trend data for key metrics
 - [x] Modern metrics (ROE, FCF Yield, PEG) in context
 - [x] Few-shot example in system prompt
-- [ ] Prompt caching for repeated tickers
+- [x] Prompt caching for repeated tickers
 
 ### 1.3 Scoring Refinements
 - [x] Industry-adjusted thresholds (e.g., R&D threshold higher for tech)
@@ -237,7 +237,7 @@
 - 100% of agent runs traceable end-to-end (every step recorded)
 - Resumable: any agent run can be interrupted and resumed from checkpoint
 
-**Status (2026-05-12):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Structured-output enforcement (parse + auto-repair loop) added. Live trace UI shipped (`Agent` sidebar section, SSE-driven). Next: Postgres persistence, multi-agent orchestration.
+**Status (2026-05-15):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Structured-output enforcement (parse + auto-repair loop) added. Live trace UI shipped (`Agent` sidebar section, SSE-driven). Prompt caching shipped — `system` + tail-of-tools marked with `cache_control: ephemeral` so repeat-ticker runs reuse the static prefix; `LLMUsage` already prices cache reads/writes. Next: Postgres persistence, multi-agent orchestration.
 
 ### 7.1 Agent Harness (self-authored, no LangGraph)
 
@@ -290,7 +290,7 @@
 ### 7.5 Model Routing
 
 - [ ] **Router policy** — Haiku for intent classification + simple RAG, Sonnet for analytical subagents, Opus for final synthesis (configurable per role)
-- [ ] **Prompt caching** — Anthropic ephemeral cache on system prompt + few-shots (target ≥ 80% cache hit rate on repeat tickers)
+- [x] **Prompt caching** — Anthropic ephemeral `cache_control` on `system` block + tail of tools array in `llm.py`. Existing `LLMUsage.cache_read_tokens` / `cache_write_tokens` accounting already prices cache reads at 10% and writes at 125% of input rate, so the savings surface in `total_cost_usd`. Opt-out via `AnthropicClient(cache_system=False, cache_tools=False)`.
 - [ ] **Cost telemetry** — dashboard shows token spend per agent role, per query
 - [ ] **A/B harness** — pin two model configs side-by-side, route X% of traffic to each
 
@@ -466,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-12 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools + structured-output enforcement)*
+*Last updated: 2026-05-15 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools + structured-output enforcement + prompt caching)*

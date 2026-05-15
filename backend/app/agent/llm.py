@@ -4,11 +4,21 @@ This is the only place the rest of the harness imports `anthropic`. The
 `complete()` method takes message history + tool schemas, returns a single
 typed `LLMTurn` describing what the model said and what tools it wants to call.
 Cost is computed from a per-model price table; cache hits/writes are tracked
-separately so we can quantify prompt-caching savings later."""
+separately so we can quantify prompt-caching savings.
+
+Prompt caching: by default the system prompt and tool schemas are marked
+cache-eligible (`cache_control: {"type": "ephemeral"}`). Anthropic caches
+everything up to and including a marked block, so marking the system block
+plus the last tool covers all the static prefix of every agent turn. A repeat
+ticker query within the 5-minute TTL pays ~10% of the input price on those
+tokens instead of full freight — usage tracking already records
+`cache_read_input_tokens` and `cache_creation_input_tokens` separately so the
+savings show up in `LLMUsage.cost_usd`."""
 
 from __future__ import annotations
 
 import contextlib
+import copy
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -47,11 +57,20 @@ class LLMTurn:
 
 
 class AnthropicClient:
-    def __init__(self, api_key: str, default_model: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        default_model: str,
+        *,
+        cache_system: bool = True,
+        cache_tools:  bool = True,
+    ) -> None:
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set.")
         self._client = AsyncAnthropic(api_key=api_key)
         self._default_model = default_model
+        self._cache_system  = cache_system
+        self._cache_tools   = cache_tools
 
     async def complete(
         self,
@@ -66,11 +85,14 @@ class AnthropicClient:
         model = model or self._default_model
         t0 = time.perf_counter()
 
+        system_param = _cached_system(system) if self._cache_system else system
+        tools_param  = _cached_tools(tools)   if self._cache_tools  else (tools or [])
+
         resp = await self._client.messages.create(
             model=model,
-            system=system,
+            system=system_param,
             messages=messages,
-            tools=tools or [],
+            tools=tools_param,
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -107,6 +129,34 @@ class AnthropicClient:
     async def aclose(self) -> None:
         with contextlib.suppress(Exception):
             await self._client.close()
+
+
+def _cached_system(system: str) -> Any:
+    """Wrap the system prompt in a single cache-eligible text block.
+
+    Anthropic accepts either a plain string or a list of content blocks for
+    `system`. Switching to the block form lets us attach `cache_control` so
+    the prompt is reused across turns within the 5-minute ephemeral TTL.
+    Empty strings stay as empty strings — caching a zero-length block is a
+    400 from the API."""
+    if not system:
+        return system
+    return [{
+        "type":          "text",
+        "text":          system,
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
+def _cached_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the last tool with `cache_control` so the full tools array becomes
+    a cache breakpoint. Anthropic caches every block up to and including a
+    marked one — one marker on the tail therefore covers every tool above it."""
+    if not tools:
+        return []
+    out = [copy.deepcopy(t) for t in tools]
+    out[-1]["cache_control"] = {"type": "ephemeral"}
+    return out
 
 
 def _build_usage(model: str, raw_usage: Any, latency_ms: int) -> LLMUsage:
