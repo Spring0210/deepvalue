@@ -6,7 +6,7 @@ import type { Message } from '../../types'
 const WELCOME: Message = {
   role: 'assistant',
   content:
-    "Good day. I'm your Warren Buffett AI advisor. Search for a stock above, then ask me anything — financial health, investment thesis, ratio interpretation, or general Buffett principles.",
+    "Hello! I'm your DeepValue AI advisor. Search for a stock above, then ask me anything — financial health, investment thesis, ratio interpretation, or valuation principles.",
 }
 
 export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolean }) {

@@ -8,9 +8,19 @@ import ChatDrawer from './components/ChatDrawer'
 import ErrorBoundary from './components/ErrorBoundary'
 import type { Section } from './types'
 
+const VALID_SECTIONS: Section[] = ['ratios', 'chart', 'valuation', 'statements', 'ai', 'agent', 'watchlist']
+
 export default function App() {
-  const [section, setSection]   = useState<Section>('ratios')
+  const [section, setSection] = useState<Section>(() => {
+    const saved = localStorage.getItem('deepvalue_section')
+    return (saved && VALID_SECTIONS.includes(saved as Section)) ? saved as Section : 'ratios'
+  })
   const [chatOpen, setChatOpen] = useState(false)
+
+  function handleNavigate(s: Section) {
+    setSection(s)
+    localStorage.setItem('deepvalue_section', s)
+  }
 
   return (
     <StockProvider>
@@ -20,13 +30,13 @@ export default function App() {
           <div className="flex-1 flex overflow-hidden min-h-0 relative">
             <Sidebar
               active={section}
-              onNavigate={setSection}
+              onNavigate={handleNavigate}
               chatOpen={chatOpen}
               onChatToggle={() => setChatOpen(p => !p)}
             />
             <main className="flex-1 overflow-y-auto min-w-0">
               <ErrorBoundary>
-                <Dashboard section={section} onNavigate={setSection} />
+                <Dashboard section={section} onNavigate={handleNavigate} />
               </ErrorBoundary>
             </main>
             <ErrorBoundary>

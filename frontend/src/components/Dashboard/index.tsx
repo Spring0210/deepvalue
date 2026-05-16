@@ -89,13 +89,13 @@ export default function Dashboard({ section, onNavigate }: Props) {
             className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
             style={{ background: '#0A84FF', boxShadow: '0 8px 32px rgba(10,132,255,0.35)' }}
           >
-            <span className="text-3xl font-bold text-white">B</span>
+            <span className="text-3xl font-bold text-white">D</span>
           </div>
           <p className="font-semibold text-[17px]" style={{ color: '#F5F5F7' }}>
-            Warren Buffett Stock Analyzer
+            DeepValue Stock Analyzer
           </p>
           <p className="text-sm mt-1.5 max-w-xs mx-auto" style={{ color: 'rgba(235,235,245,0.45)' }}>
-            Enter any stock ticker to analyze against Buffett's investment criteria
+            Enter any stock ticker to start your investment research
           </p>
           <div className="flex gap-2 justify-center mt-4 flex-wrap">
             {['AAPL', 'MSFT', 'KO', 'BRK-B', 'JNJ'].map(t => (

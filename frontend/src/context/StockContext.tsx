@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult } from '../types'
 import { fetchRatios, fetchFinancials, fetchQuote, fetchValuation, fetchMoat } from '../api/client'
 
@@ -27,8 +27,11 @@ const StockContext = createContext<StockContextType | null>(null)
 
 const EMPTY_RECOMMENDATION: Recommendation = { text: '', ticker: '', streaming: false }
 
+const LS_TICKER = 'deepvalue_ticker'
+
 export function StockProvider({ children }: { children: ReactNode }) {
   const [ticker, setTicker]               = useState('')
+  const restoredRef = useRef(false)
   const [quote, setQuote]                 = useState<StockQuote | null>(null)
   const [ratios, setRatios]               = useState<BuffettRatio[]>([])
   const [weightedScore, setWeightedScore] = useState(0)
@@ -51,6 +54,7 @@ export function StockProvider({ children }: { children: ReactNode }) {
         fetchMoat(newTicker),
       ])
       setTicker(ratioData.ticker)
+      localStorage.setItem(LS_TICKER, ratioData.ticker)
       setRatios(ratioData.ratios)
       setWeightedScore(ratioData.weighted_score)
       setFinancials(finData)
@@ -65,6 +69,14 @@ export function StockProvider({ children }: { children: ReactNode }) {
       setLoading(false)
     }
   }
+
+  // Restore last-viewed ticker after a page reload / browser tab wakeup
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    const saved = localStorage.getItem(LS_TICKER)
+    if (saved) search(saved)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <StockContext.Provider value={{

@@ -16,11 +16,11 @@ export default function Header() {
           className="w-8 h-8 rounded-lg flex items-center justify-center select-none flex-shrink-0"
           style={{ background: '#0A84FF', boxShadow: '0 2px 8px rgba(10,132,255,0.4)' }}
         >
-          <span className="text-white font-bold text-sm">B</span>
+          <span className="text-white font-bold text-sm">D</span>
         </div>
         <div>
           <h1 className="font-semibold text-[15px] leading-none tracking-tight" style={{ color: '#F5F5F7' }}>
-            BuffettAI
+            DeepValue
           </h1>
           <p className="text-[11px] mt-0.5" style={{ color: 'rgba(235,235,245,0.4)' }}>
             Investment Analyzer
