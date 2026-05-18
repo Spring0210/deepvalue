@@ -1,18 +1,32 @@
+import hashlib
 from pathlib import Path
 from typing import Iterator
+
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from groq import Groq
-from app.config import GROQ_API_KEY, GROQ_MODEL, GROQ_RECOMMENDATION_MODEL
 
-_DATA_DIR = Path(__file__).parent.parent / "data"
-_KB_PATH = _DATA_DIR / "buffett_knowledge.txt"
-_INDEX_PATH = _DATA_DIR / "faiss_index"
+from app.config import (
+    ANTHROPIC_API_KEY,
+    ANTHROPIC_CHAT_MODEL,
+    ANTHROPIC_RECO_MODEL,
+    CHAT_PROVIDER,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    GROQ_RECOMMENDATION_MODEL,
+)
+
+_DATA_DIR    = Path(__file__).parent.parent / "data"
+_KB_PATH     = _DATA_DIR / "buffett_knowledge.txt"
+_LETTERS_DIR = _DATA_DIR / "buffett_letters"
+_INDEX_PATH  = _DATA_DIR / "faiss_index"
+_SIGNATURE   = _INDEX_PATH / ".signature"
 
 _vector_db: FAISS | None = None
 _embeddings: HuggingFaceEmbeddings | None = None
-_groq_client: Groq | None = None
+_groq_client = None
+_anthropic_client = None
 
 
 def _get_embeddings() -> HuggingFaceEmbeddings:
@@ -25,39 +39,107 @@ def _get_embeddings() -> HuggingFaceEmbeddings:
     return _embeddings
 
 
-def _get_groq() -> Groq:
+def _get_groq():
     global _groq_client
     if _groq_client is None:
+        from groq import Groq
         _groq_client = Groq(api_key=GROQ_API_KEY)
     return _groq_client
 
 
+def _get_anthropic():
+    global _anthropic_client
+    if _anthropic_client is None:
+        from anthropic import Anthropic
+        _anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _anthropic_client
+
+
+def _resolve_provider() -> str:
+    """Pick provider for chat / recommendation. Anthropic when its key is present
+    and CHAT_PROVIDER hasn't forced a downgrade; otherwise Groq."""
+    if CHAT_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
+        return "anthropic"
+    if CHAT_PROVIDER == "groq" and GROQ_API_KEY:
+        return "groq"
+    if ANTHROPIC_API_KEY:
+        return "anthropic"
+    return "groq"
+
+
+def _knowledge_files() -> list[Path]:
+    """All text sources scanned into the index — order is stable for hashing."""
+    files: list[Path] = []
+    if _KB_PATH.exists():
+        files.append(_KB_PATH)
+    if _LETTERS_DIR.exists():
+        files.extend(sorted(_LETTERS_DIR.glob("*.txt")))
+    return files
+
+
+def _compute_signature(files: list[Path]) -> str:
+    """Hash of (path, size, mtime) for every source file. Cheap, deterministic,
+    catches new files + edits without re-reading content."""
+    h = hashlib.sha256()
+    for f in files:
+        stat = f.stat()
+        h.update(f.name.encode())
+        h.update(str(stat.st_size).encode())
+        h.update(str(int(stat.st_mtime)).encode())
+    return h.hexdigest()
+
+
+def _build_documents(files: list[Path]) -> list[Document]:
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    docs: list[Document] = []
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        source = f.stem
+        for chunk in splitter.split_text(text):
+            docs.append(Document(page_content=chunk, metadata={"source": source}))
+    return docs
+
+
 def init_rag() -> None:
-    """Build or load the FAISS vector index. Called once at app startup."""
+    """Build or load the FAISS vector index. Called once at app startup.
+    Rebuilds when the on-disk signature no longer matches the knowledge files,
+    so dropping new letters into data/buffett_letters/ auto-refreshes the index."""
     global _vector_db
     embeddings = _get_embeddings()
+    files = _knowledge_files()
+    if not files:
+        raise RuntimeError(f"No knowledge files found under {_DATA_DIR}")
 
-    if _INDEX_PATH.exists():
-        print("Loading existing FAISS index...")
+    current_sig = _compute_signature(files)
+    stored_sig = _SIGNATURE.read_text().strip() if _SIGNATURE.exists() else None
+
+    if _INDEX_PATH.exists() and stored_sig == current_sig:
+        print(f"Loading existing FAISS index ({len(files)} source files)...")
         _vector_db = FAISS.load_local(
             str(_INDEX_PATH), embeddings, allow_dangerous_deserialization=True
         )
-    else:
-        print("Building FAISS index from knowledge base...")
-        text = _KB_PATH.read_text(encoding="utf-8")
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        docs = splitter.create_documents([text])
-        _vector_db = FAISS.from_documents(docs, embeddings)
-        _vector_db.save_local(str(_INDEX_PATH))
-        print(f"FAISS index built with {len(docs)} chunks and saved.")
+        return
+
+    print(f"Building FAISS index from {len(files)} source file(s)...")
+    docs = _build_documents(files)
+    _vector_db = FAISS.from_documents(docs, embeddings)
+    _INDEX_PATH.mkdir(parents=True, exist_ok=True)
+    _vector_db.save_local(str(_INDEX_PATH))
+    _SIGNATURE.write_text(current_sig)
+    print(f"FAISS index built with {len(docs)} chunks from {len(files)} sources.")
 
 
 def retrieve(query: str, k: int = 3) -> str:
-    """Return top-k relevant chunks from the knowledge base."""
+    """Return top-k relevant chunks. Each chunk is prefixed with its source so
+    the LLM can cite which document a fact came from."""
     if _vector_db is None:
         init_rag()
     docs = _vector_db.similarity_search(query, k=k)  # type: ignore[union-attr]
-    return "\n\n".join(d.page_content for d in docs)
+    parts = []
+    for d in docs:
+        src = d.metadata.get("source", "unknown")
+        parts.append(f"[source: {src}]\n{d.page_content}")
+    return "\n\n".join(parts)
 
 
 def _build_chat_system_message() -> str:
@@ -65,6 +147,7 @@ def _build_chat_system_message() -> str:
         "You are an expert investment analyst well-versed in Warren Buffett's investment philosophy. "
         "Use the provided financial data and Buffett's principles to answer the user's questions. "
         "Be specific, concise, and reference actual numbers when available. "
+        "When you quote a fact from the knowledge base, cite its [source: ...] tag. "
         "Do not make direct buy/sell recommendations — provide objective analysis."
     )
 
@@ -219,32 +302,79 @@ def _build_recommendation_prompt(
     return system_msg, user_msg
 
 
+def _stream_anthropic(
+    system_msg: str,
+    messages: list[dict],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> Iterator[str]:
+    """Anthropic streaming → SSE token frames. Anthropic takes `system` as a
+    top-level field, not a message role, so callers pass user/assistant history
+    in `messages` and the system prompt separately."""
+    client = _get_anthropic()
+    with client.messages.stream(
+        model=model,
+        system=system_msg,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    ) as stream:
+        for token in stream.text_stream:
+            if token:
+                yield f"data: {token}\n\n"
+
+
+def _stream_groq(
+    messages: list[dict],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> Iterator[str]:
+    client = _get_groq()
+    stream = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    for chunk in stream:
+        token = chunk.choices[0].delta.content
+        if token:
+            yield f"data: {token}\n\n"
+
+
 def stream_recommendation(
     ticker: str,
     ratios: list[dict],
     weighted_score: float,
     quote: dict,
 ) -> Iterator[str]:
-    """Stream an AI investment recommendation as SSE tokens."""
+    """Stream an AI investment recommendation as SSE tokens.
+    Uses Anthropic Sonnet when configured; falls back to Groq."""
     try:
-        client = _get_groq()
         system_msg, user_msg = _build_recommendation_prompt(ticker, ratios, weighted_score, quote)
+        provider = _resolve_provider()
 
-        stream = client.chat.completions.create(
-            model=GROQ_RECOMMENDATION_MODEL,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user",   "content": user_msg},
-            ],
-            stream=True,
-            max_tokens=800,
-            temperature=0.6,
-        )
-
-        for chunk in stream:
-            token = chunk.choices[0].delta.content
-            if token:
-                yield f"data: {token}\n\n"
+        if provider == "anthropic":
+            yield from _stream_anthropic(
+                system_msg=system_msg,
+                messages=[{"role": "user", "content": user_msg}],
+                model=ANTHROPIC_RECO_MODEL,
+                max_tokens=800,
+                temperature=0.6,
+            )
+        else:
+            yield from _stream_groq(
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user",   "content": user_msg},
+                ],
+                model=GROQ_RECOMMENDATION_MODEL,
+                max_tokens=800,
+                temperature=0.6,
+            )
 
         yield "data: [DONE]\n\n"
 
@@ -261,33 +391,31 @@ def stream_chat(
     ratios: list[dict],
     history: list[dict] | None = None,
 ) -> Iterator[str]:
-    """
-    Stream an LLM response with full conversation history.
-    history: list of {role, content} dicts from previous turns (excluding the current question).
-    Yields SSE tokens ending with 'data: [DONE]\\n\\n'.
-    """
+    """Stream an LLM response with full conversation history.
+    Anthropic Haiku when configured; falls back to Groq."""
     try:
-        client = _get_groq()
-        system_content = _build_chat_system_message()
-        user_content   = _build_chat_user_message(question, ticker, ratios)
+        system_msg   = _build_chat_system_message()
+        user_msg     = _build_chat_user_message(question, ticker, ratios)
+        provider     = _resolve_provider()
 
-        messages: list[dict] = [{"role": "system", "content": system_content}]
-        if history:
-            messages.extend(history)
-        messages.append({"role": "user", "content": user_content})
+        history = history or []
+        messages = [*history, {"role": "user", "content": user_msg}]
 
-        stream = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            stream=True,
-            max_tokens=1024,
-            temperature=0.7,
-        )
-
-        for chunk in stream:
-            token = chunk.choices[0].delta.content
-            if token:
-                yield f"data: {token}\n\n"
+        if provider == "anthropic":
+            yield from _stream_anthropic(
+                system_msg=system_msg,
+                messages=messages,
+                model=ANTHROPIC_CHAT_MODEL,
+                max_tokens=1024,
+                temperature=0.7,
+            )
+        else:
+            yield from _stream_groq(
+                messages=[{"role": "system", "content": system_msg}, *messages],
+                model=GROQ_MODEL,
+                max_tokens=1024,
+                temperature=0.7,
+            )
 
         yield "data: [DONE]\n\n"
 

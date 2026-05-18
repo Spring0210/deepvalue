@@ -16,6 +16,10 @@ build/
 # FAISS index (rebuilt on first run)
 backend/app/data/faiss_index/
 
+# Buffett letters — fetched locally via scripts/fetch_buffett_letters.py.
+# Berkshire Hathaway holds copyright; do not commit redistributable copies.
+backend/app/data/buffett_letters/
+
 # Node
 node_modules/
 frontend/dist/

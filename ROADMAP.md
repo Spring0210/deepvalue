@@ -42,6 +42,7 @@
 
 - [x] **LLM model too small for financial reasoning** (`rag.py`)
   — `stream_recommendation()` now uses `GROQ_RECOMMENDATION_MODEL` (default `llama-3.3-70b-versatile`). Chat keeps 8B for speed.
+  — Follow-up: chat + reco now prefer Claude when `ANTHROPIC_API_KEY` is set (Haiku 4.5 for chat, Sonnet 4.5 for reco), with automatic Groq fallback. Set `CHAT_PROVIDER=groq` to force the old path.
 
 - [x] **AI Pick recommendation lost on tab switch** (`AIRecommendation.tsx`)
   — `recommendation: {text, ticker, streaming}` lifted into `StockContext`. Tab switches no longer destroy it.
@@ -72,9 +73,10 @@
   — `all-MiniLM-L6-v2` is a general-purpose model. Retrieval quality for financial terminology is limited.
   — Fix (later): add a cross-encoder re-ranking step, or switch to a finance-tuned embedding model.
 
-- [ ] **Knowledge base is a single static file** (`buffett_knowledge.txt`)
-  — All queries retrieve from the same undifferentiated corpus regardless of sector or question type.
-  — Fix (later): split into domain-specific documents (Buffett principles, tech sector, consumer staples, etc.) and tag with metadata for filtered retrieval.
+- [x] **Knowledge base is a single static file** (`buffett_knowledge.txt`)
+  — `rag.py` now scans `data/buffett_knowledge.txt` + every `.txt` under `data/buffett_letters/`, attaches `source` metadata per chunk, and rebuilds the FAISS index automatically when source files change (signature file).
+  — `scripts/fetch_buffett_letters.py` downloads 2015-2024 Berkshire shareholder letters (PDF → text). Letters dir is `.gitignored`; copyright belongs to Berkshire.
+  — Future: metadata-filtered retrieval (`search(query, source="2023")`) once we move off FAISS to pgvector (Phase 8).
 
 - [x] **No rate limiting on API routes**
   — A single client can flood yfinance with requests, triggering Yahoo Finance IP bans.
