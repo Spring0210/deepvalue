@@ -98,10 +98,17 @@ export interface MoatResult {
 
 export type Section = 'ratios' | 'chart' | 'valuation' | 'statements' | 'ai' | 'watchlist' | 'agent'
 
+export interface ChatSource {
+  id: number
+  source: string
+  snippet: string
+}
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+  sources?: ChatSource[]
 }
 
 // ── Agent harness wire types (mirror app/agent/models.py) ────────────────────

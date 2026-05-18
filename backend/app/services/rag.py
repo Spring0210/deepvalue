@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from typing import Iterator
 
@@ -129,17 +130,33 @@ def init_rag() -> None:
     print(f"FAISS index built with {len(docs)} chunks from {len(files)} sources.")
 
 
-def retrieve(query: str, k: int = 3) -> str:
-    """Return top-k relevant chunks. Each chunk is prefixed with its source so
-    the LLM can cite which document a fact came from."""
+def retrieve_with_sources(query: str, k: int = 3) -> tuple[str, list[dict]]:
+    """Return (joined_context, sources). Each source carries enough metadata
+    for the frontend to render a citation chip: source name, the chunk snippet
+    truncated for tooltip display, and a numeric id used in the [n] tags
+    inside the joined context. The numeric id is 1-indexed and stable for the
+    duration of the call so the LLM can cite chunks as [1] / [2] / ..."""
     if _vector_db is None:
         init_rag()
     docs = _vector_db.similarity_search(query, k=k)  # type: ignore[union-attr]
-    parts = []
-    for d in docs:
+    sources: list[dict] = []
+    parts: list[str] = []
+    for i, d in enumerate(docs, start=1):
         src = d.metadata.get("source", "unknown")
-        parts.append(f"[source: {src}]\n{d.page_content}")
-    return "\n\n".join(parts)
+        snippet = d.page_content.strip()
+        parts.append(f"[{i}] (source: {src})\n{snippet}")
+        sources.append({
+            "id":      i,
+            "source":  src,
+            "snippet": snippet[:280] + ("…" if len(snippet) > 280 else ""),
+        })
+    return "\n\n".join(parts), sources
+
+
+def retrieve(query: str, k: int = 3) -> str:
+    """Backwards-compatible wrapper — returns only the joined context."""
+    ctx, _ = retrieve_with_sources(query, k=k)
+    return ctx
 
 
 def _build_chat_system_message() -> str:
@@ -147,13 +164,18 @@ def _build_chat_system_message() -> str:
         "You are an expert investment analyst well-versed in Warren Buffett's investment philosophy. "
         "Use the provided financial data and Buffett's principles to answer the user's questions. "
         "Be specific, concise, and reference actual numbers when available. "
-        "When you quote a fact from the knowledge base, cite its [source: ...] tag. "
-        "Do not make direct buy/sell recommendations — provide objective analysis."
+        "When you state a fact drawn from the BUFFETT KNOWLEDGE BASE, cite the chunk number "
+        "inline as [1], [2], etc., matching the bracketed ids in the context. "
+        "Do not make direct buy/sell recommendations — provide objective analysis. "
+        "Format the response in concise Markdown (short paragraphs, bullet lists where it helps). "
+        "Do not use H1 or H2 headings — keep it conversational."
     )
 
 
-def _build_chat_user_message(question: str, ticker: str, ratios: list[dict]) -> str:
-    rag_context = retrieve(question)
+def _build_chat_user_message(
+    question: str, ticker: str, ratios: list[dict]
+) -> tuple[str, list[dict]]:
+    rag_context, sources = retrieve_with_sources(question)
 
     ratio_lines = []
     for r in ratios:
@@ -171,7 +193,7 @@ def _build_chat_user_message(question: str, ticker: str, ratios: list[dict]) -> 
         else "No stock data loaded."
     )
 
-    return (
+    user_msg = (
         "─── BUFFETT KNOWLEDGE BASE ───\n"
         f"{rag_context}\n\n"
         "─── CURRENT STOCK DATA ───\n"
@@ -179,6 +201,7 @@ def _build_chat_user_message(question: str, ticker: str, ratios: list[dict]) -> 
         "─── USER QUESTION ───\n"
         f"{question}"
     )
+    return user_msg, sources
 
 
 def _build_recommendation_prompt(
@@ -302,16 +325,16 @@ def _build_recommendation_prompt(
     return system_msg, user_msg
 
 
-def _stream_anthropic(
+def _stream_anthropic_tokens(
     system_msg: str,
     messages: list[dict],
     model: str,
     max_tokens: int,
     temperature: float,
 ) -> Iterator[str]:
-    """Anthropic streaming → SSE token frames. Anthropic takes `system` as a
-    top-level field, not a message role, so callers pass user/assistant history
-    in `messages` and the system prompt separately."""
+    """Yield raw text deltas from Anthropic streaming. Anthropic takes `system`
+    as a top-level field, not a message role, so callers pass user/assistant
+    history in `messages` and the system prompt separately."""
     client = _get_anthropic()
     with client.messages.stream(
         model=model,
@@ -322,15 +345,16 @@ def _stream_anthropic(
     ) as stream:
         for token in stream.text_stream:
             if token:
-                yield f"data: {token}\n\n"
+                yield token
 
 
-def _stream_groq(
+def _stream_groq_tokens(
     messages: list[dict],
     model: str,
     max_tokens: int,
     temperature: float,
 ) -> Iterator[str]:
+    """Yield raw text deltas from Groq streaming."""
     client = _get_groq()
     stream = client.chat.completions.create(
         model=model,
@@ -342,7 +366,43 @@ def _stream_groq(
     for chunk in stream:
         token = chunk.choices[0].delta.content
         if token:
-            yield f"data: {token}\n\n"
+            yield token
+
+
+def _sse_event(event: str, payload: dict) -> str:
+    """Serialize a single event-typed SSE frame. JSON encoding protects against
+    newlines / control chars inside token text — the old `data: <raw token>`
+    format silently dropped multi-line tokens because the frontend split on
+    `\\n` to find event boundaries."""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _dispatch_tokens(
+    provider: str,
+    *,
+    system_msg: str,
+    user_history: list[dict],
+    anthropic_model: str,
+    groq_model: str,
+    max_tokens: int,
+    temperature: float,
+) -> Iterator[str]:
+    """Provider-agnostic raw-token generator."""
+    if provider == "anthropic":
+        yield from _stream_anthropic_tokens(
+            system_msg=system_msg,
+            messages=user_history,
+            model=anthropic_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    else:
+        yield from _stream_groq_tokens(
+            messages=[{"role": "system", "content": system_msg}, *user_history],
+            model=groq_model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
 
 def stream_recommendation(
@@ -351,38 +411,30 @@ def stream_recommendation(
     weighted_score: float,
     quote: dict,
 ) -> Iterator[str]:
-    """Stream an AI investment recommendation as SSE tokens.
-    Uses Anthropic Sonnet when configured; falls back to Groq."""
+    """Stream an AI investment recommendation as event-typed SSE frames:
+    `event: token / done / error`. JSON-encoded payloads survive newlines
+    inside model output."""
     try:
         system_msg, user_msg = _build_recommendation_prompt(ticker, ratios, weighted_score, quote)
         provider = _resolve_provider()
 
-        if provider == "anthropic":
-            yield from _stream_anthropic(
-                system_msg=system_msg,
-                messages=[{"role": "user", "content": user_msg}],
-                model=ANTHROPIC_RECO_MODEL,
-                max_tokens=800,
-                temperature=0.6,
-            )
-        else:
-            yield from _stream_groq(
-                messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user",   "content": user_msg},
-                ],
-                model=GROQ_RECOMMENDATION_MODEL,
-                max_tokens=800,
-                temperature=0.6,
-            )
+        for token in _dispatch_tokens(
+            provider,
+            system_msg=system_msg,
+            user_history=[{"role": "user", "content": user_msg}],
+            anthropic_model=ANTHROPIC_RECO_MODEL,
+            groq_model=GROQ_RECOMMENDATION_MODEL,
+            max_tokens=800,
+            temperature=0.6,
+        ):
+            yield _sse_event("token", {"text": token})
 
-        yield "data: [DONE]\n\n"
+        yield _sse_event("done", {})
 
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        yield f"data: [ERROR] {exc}\n\n"
-        yield "data: [DONE]\n\n"
+        yield _sse_event("error", {"error": str(exc)})
 
 
 def stream_chat(
@@ -391,36 +443,31 @@ def stream_chat(
     ratios: list[dict],
     history: list[dict] | None = None,
 ) -> Iterator[str]:
-    """Stream an LLM response with full conversation history.
-    Anthropic Haiku when configured; falls back to Groq."""
+    """Stream an LLM response with conversation history as event-typed SSE.
+    First frame is `event: sources` carrying retrieved chunk metadata for the
+    UI to render citations; tokens follow, then `event: done`."""
     try:
-        system_msg   = _build_chat_system_message()
-        user_msg     = _build_chat_user_message(question, ticker, ratios)
-        provider     = _resolve_provider()
+        system_msg = _build_chat_system_message()
+        user_msg, sources = _build_chat_user_message(question, ticker, ratios)
+        provider = _resolve_provider()
+
+        yield _sse_event("sources", {"items": sources})
 
         history = history or []
-        messages = [*history, {"role": "user", "content": user_msg}]
+        for token in _dispatch_tokens(
+            provider,
+            system_msg=system_msg,
+            user_history=[*history, {"role": "user", "content": user_msg}],
+            anthropic_model=ANTHROPIC_CHAT_MODEL,
+            groq_model=GROQ_MODEL,
+            max_tokens=1024,
+            temperature=0.7,
+        ):
+            yield _sse_event("token", {"text": token})
 
-        if provider == "anthropic":
-            yield from _stream_anthropic(
-                system_msg=system_msg,
-                messages=messages,
-                model=ANTHROPIC_CHAT_MODEL,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-        else:
-            yield from _stream_groq(
-                messages=[{"role": "system", "content": system_msg}, *messages],
-                model=GROQ_MODEL,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-
-        yield "data: [DONE]\n\n"
+        yield _sse_event("done", {})
 
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        yield f"data: [ERROR] {exc}\n\n"
-        yield "data: [DONE]\n\n"
+        yield _sse_event("error", {"error": str(exc)})

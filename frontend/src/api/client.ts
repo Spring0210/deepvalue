@@ -3,6 +3,7 @@ import type {
   BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult, PriceHistory,
   AgentStep, AgentRunSummary,
   OrchestratorStep, OrchestratorRunSummary,
+  ChatSource,
 } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
@@ -40,12 +41,13 @@ export async function fetchHistory(ticker: string, period: string): Promise<Pric
 }
 
 export async function streamChat(
-  question: string,
-  ticker: string,
-  ratios: BuffettRatio[],
-  history: Array<{ role: string; content: string }>,
-  onToken: (token: string) => void,
-  onDone: () => void,
+  question:    string,
+  ticker:      string,
+  ratios:      BuffettRatio[],
+  history:     Array<{ role: string; content: string }>,
+  onToken:     (token: string) => void,
+  onDone:      () => void,
+  onSources?:  (sources: ChatSource[]) => void,
 ): Promise<void> {
   const response = await fetch('/api/chat', {
     method: 'POST',
@@ -53,16 +55,30 @@ export async function streamChat(
     body: JSON.stringify({ question, ticker, ratios, history }),
   })
   if (!response.ok) throw new Error(`Server error: ${response.status}`)
-  await _readSSE(response, onToken, onDone)
+
+  await _readEventSSE(response, (event, data) => {
+    if (event === 'token') {
+      const t = (data as { text?: string })?.text
+      if (t) onToken(t)
+    } else if (event === 'sources') {
+      const items = (data as { items?: ChatSource[] })?.items
+      if (items && onSources) onSources(items)
+    } else if (event === 'done') {
+      onDone()
+    } else if (event === 'error') {
+      const err = (data as { error?: string })?.error || 'streaming error'
+      throw new Error(err)
+    }
+  })
 }
 
 export async function streamRecommendation(
-  ticker: string,
-  ratios: BuffettRatio[],
+  ticker:        string,
+  ratios:        BuffettRatio[],
   weightedScore: number,
-  quote: StockQuote,
-  onToken: (token: string) => void,
-  onDone: () => void,
+  quote:         StockQuote,
+  onToken:       (token: string) => void,
+  onDone:        () => void,
 ): Promise<void> {
   const response = await fetch('/api/stock/recommendation', {
     method: 'POST',
@@ -75,32 +91,18 @@ export async function streamRecommendation(
     }),
   })
   if (!response.ok) throw new Error(`Server error: ${response.status}`)
-  await _readSSE(response, onToken, onDone)
-}
 
-async function _readSSE(
-  response: Response,
-  onToken: (token: string) => void,
-  onDone: () => void,
-): Promise<void> {
-  const reader = response.body?.getReader()
-  const decoder = new TextDecoder()
-  if (!reader) return
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    const chunk = decoder.decode(value, { stream: true })
-    for (const line of chunk.split('\n')) {
-      if (line.startsWith('data: ')) {
-        const token = line.slice(6)
-        if (token === '[DONE]') { onDone(); return }
-        if (token.startsWith('[ERROR]')) throw new Error(token.slice(8))
-        onToken(token)
-      }
+  await _readEventSSE(response, (event, data) => {
+    if (event === 'token') {
+      const t = (data as { text?: string })?.text
+      if (t) onToken(t)
+    } else if (event === 'done') {
+      onDone()
+    } else if (event === 'error') {
+      const err = (data as { error?: string })?.error || 'streaming error'
+      throw new Error(err)
     }
-  }
-  onDone()
+  })
 }
 
 // ── Agent SSE (event-typed: event: <name>\ndata: <json>\n\n) ─────────────────

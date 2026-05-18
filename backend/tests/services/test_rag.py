@@ -1,5 +1,5 @@
 """Tests for the RAG layer: provider routing, knowledge-file scanning,
-index signature, and metadata propagation.
+index signature, metadata propagation, and event-typed SSE framing.
 
 These tests never touch a real LLM or load the sentence-transformer model.
 The embeddings call (`init_rag` → `_get_embeddings`) is mocked out so the
@@ -7,8 +7,8 @@ suite stays in the <5s budget called out in CLAUDE.md §6."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -103,83 +103,142 @@ def test_knowledge_files_picks_up_letters_dir(tmp_path: Path, monkeypatch):
     assert "ignore.md" not in names
 
 
-# ── provider dispatch in stream_chat / stream_recommendation ──────────────────
+# ── retrieve_with_sources ────────────────────────────────────────────────────
+
+def test_retrieve_with_sources_assigns_ids_and_truncates(monkeypatch):
+    long_text = "moat " * 200  # > 280 chars, forces snippet truncation
+    class FakeDoc:
+        def __init__(self, page_content, source):
+            self.page_content = page_content
+            self.metadata = {"source": source}
+    class FakeDB:
+        def similarity_search(self, _q, k=3):
+            return [
+                FakeDoc(long_text, "buffett_knowledge"),
+                FakeDoc("short letter content", "2020"),
+            ]
+    monkeypatch.setattr(rag, "_vector_db", FakeDB())
+
+    ctx, sources = rag.retrieve_with_sources("any q", k=2)
+    assert "[1]" in ctx and "[2]" in ctx
+    assert [s["id"] for s in sources] == [1, 2]
+    assert [s["source"] for s in sources] == ["buffett_knowledge", "2020"]
+    assert sources[0]["snippet"].endswith("…")        # truncated
+    assert not sources[1]["snippet"].endswith("…")    # short, untruncated
+    assert len(sources[0]["snippet"]) <= 281
+
+
+# ── event-typed SSE framing ──────────────────────────────────────────────────
 
 def _consume(gen):
     return [x for x in gen]
 
 
-def test_stream_chat_dispatches_to_anthropic(monkeypatch):
+def _parse_sse(frames: list[str]) -> list[tuple[str, dict]]:
+    """Decode list of `event: X\\ndata: {...}\\n\\n` strings into (event, payload)."""
+    out: list[tuple[str, dict]] = []
+    for frame in frames:
+        body = frame.strip("\n")
+        event = ""
+        data_lines: list[str] = []
+        for line in body.split("\n"):
+            if   line.startswith("event: "): event = line[7:]
+            elif line.startswith("data: "):  data_lines.append(line[6:])
+        if data_lines:
+            out.append((event, json.loads("\n".join(data_lines))))
+    return out
+
+
+def test_stream_chat_emits_sources_then_tokens_then_done(monkeypatch):
     monkeypatch.setattr(rag, "ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(rag, "GROQ_API_KEY", "k")
     monkeypatch.setattr(rag, "CHAT_PROVIDER", "anthropic")
-
-    monkeypatch.setattr(rag, "retrieve", lambda q, k=3: "[source: test]\nstub context")
+    monkeypatch.setattr(
+        rag, "retrieve_with_sources",
+        lambda q, k=3: ("[1] (source: kb)\ncontext", [{"id": 1, "source": "kb", "snippet": "context"}]),
+    )
 
     called = {"anthropic": 0, "groq": 0}
-    def fake_anthropic(*, system_msg, messages, model, max_tokens, temperature):
+    def fake_anthropic_tokens(*, system_msg, messages, model, max_tokens, temperature):
         called["anthropic"] += 1
         assert "Buffett" in system_msg
         assert messages[-1]["role"] == "user"
-        yield "data: hi\n\n"
-    def fake_groq(*, messages, model, max_tokens, temperature):
-        called["groq"] += 1
-        yield "data: hi\n\n"
+        yield "Hello "
+        yield "world"
+    monkeypatch.setattr(rag, "_stream_anthropic_tokens", fake_anthropic_tokens)
+    monkeypatch.setattr(rag, "_stream_groq_tokens", lambda **_: (called.__setitem__("groq", called["groq"] + 1), iter([]))[1])
 
-    monkeypatch.setattr(rag, "_stream_anthropic", fake_anthropic)
-    monkeypatch.setattr(rag, "_stream_groq", fake_groq)
-
-    out = _consume(rag.stream_chat("Is AAPL a good buy?", "AAPL", []))
-    assert any("data: hi" in s for s in out)
-    assert out[-1] == "data: [DONE]\n\n"
+    events = _parse_sse(_consume(rag.stream_chat("Is AAPL a good buy?", "AAPL", [])))
+    kinds = [e for e, _ in events]
+    assert kinds == ["sources", "token", "token", "done"]
+    assert events[0][1]["items"][0]["source"] == "kb"
+    assert events[1][1]["text"] == "Hello "
+    assert events[2][1]["text"] == "world"
     assert called == {"anthropic": 1, "groq": 0}
+
+
+def test_stream_chat_token_payload_survives_newlines(monkeypatch):
+    """The whole point of switching to event-typed JSON SSE — a token that
+    contains a newline must not be silently dropped at the boundary."""
+    monkeypatch.setattr(rag, "ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(rag, "CHAT_PROVIDER", "anthropic")
+    monkeypatch.setattr(rag, "retrieve_with_sources", lambda q, k=3: ("ctx", []))
+    monkeypatch.setattr(
+        rag, "_stream_anthropic_tokens",
+        lambda **_: iter(["## Heading\nBody line"]),
+    )
+    events = _parse_sse(_consume(rag.stream_chat("q", "X", [])))
+    token_events = [d for e, d in events if e == "token"]
+    assert token_events[0]["text"] == "## Heading\nBody line"
 
 
 def test_stream_chat_falls_back_to_groq_when_no_anthropic(monkeypatch):
     monkeypatch.setattr(rag, "ANTHROPIC_API_KEY", "")
     monkeypatch.setattr(rag, "GROQ_API_KEY", "k")
     monkeypatch.setattr(rag, "CHAT_PROVIDER", "groq")
-    monkeypatch.setattr(rag, "retrieve", lambda q, k=3: "stub")
+    monkeypatch.setattr(rag, "retrieve_with_sources", lambda q, k=3: ("ctx", []))
 
     called = {"anthropic": 0, "groq": 0}
-    def fake_anthropic(**_): called["anthropic"] += 1; yield "data: x\n\n"
-    def fake_groq(**_):      called["groq"] += 1;      yield "data: x\n\n"
-    monkeypatch.setattr(rag, "_stream_anthropic", fake_anthropic)
-    monkeypatch.setattr(rag, "_stream_groq", fake_groq)
+    def fake_anthropic(**_): called["anthropic"] += 1; yield "x"
+    def fake_groq(**_):      called["groq"] += 1;      yield "x"
+    monkeypatch.setattr(rag, "_stream_anthropic_tokens", fake_anthropic)
+    monkeypatch.setattr(rag, "_stream_groq_tokens", fake_groq)
 
     _consume(rag.stream_chat("q", "X", []))
     assert called == {"anthropic": 0, "groq": 1}
 
 
-def test_stream_recommendation_dispatches_to_anthropic(monkeypatch):
+def test_stream_recommendation_emits_token_then_done(monkeypatch):
     monkeypatch.setattr(rag, "ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(rag, "CHAT_PROVIDER", "anthropic")
     monkeypatch.setattr(rag, "retrieve", lambda q, k=3: "ctx")
 
-    called = {"anthropic": 0, "groq": 0}
-    def fake_anthropic(**_): called["anthropic"] += 1; yield "data: y\n\n"
-    def fake_groq(**_):      called["groq"] += 1;      yield "data: y\n\n"
-    monkeypatch.setattr(rag, "_stream_anthropic", fake_anthropic)
-    monkeypatch.setattr(rag, "_stream_groq", fake_groq)
+    called = {"anthropic": 0}
+    def fake(**_): called["anthropic"] += 1; yield "verdict"
+    monkeypatch.setattr(rag, "_stream_anthropic_tokens", fake)
+    monkeypatch.setattr(rag, "_stream_groq_tokens", lambda **_: iter([]))
 
     ratios = [{"name": "GM", "value": 0.5, "passes": True, "threshold": "≥40%",
                "category": "Margins", "weight": 0.1}]
     quote = {"name": "KO", "sector": "Staples", "price": 60, "marketCap": 250e9}
-    out = _consume(rag.stream_recommendation("KO", ratios, 82.0, quote))
-    assert called == {"anthropic": 1, "groq": 0}
-    assert out[-1] == "data: [DONE]\n\n"
+    events = _parse_sse(_consume(rag.stream_recommendation("KO", ratios, 82.0, quote)))
+    kinds = [e for e, _ in events]
+    # Recommendation does NOT emit a sources event — citation UI is chat-only for now.
+    assert "sources" not in kinds
+    assert kinds[-1] == "done"
+    assert called == {"anthropic": 1}
 
 
-def test_stream_chat_returns_error_frame_on_exception(monkeypatch):
+def test_stream_chat_emits_error_event_on_exception(monkeypatch):
     monkeypatch.setattr(rag, "ANTHROPIC_API_KEY", "k")
     monkeypatch.setattr(rag, "CHAT_PROVIDER", "anthropic")
-    monkeypatch.setattr(rag, "retrieve", lambda q, k=3: "ctx")
+    monkeypatch.setattr(rag, "retrieve_with_sources", lambda q, k=3: ("ctx", []))
 
     def boom(**_):
         raise RuntimeError("simulated upstream failure")
         yield  # pragma: no cover — make it a generator
-    monkeypatch.setattr(rag, "_stream_anthropic", boom)
+    monkeypatch.setattr(rag, "_stream_anthropic_tokens", boom)
 
-    out = _consume(rag.stream_chat("q", "X", []))
-    assert any(s.startswith("data: [ERROR]") for s in out)
-    assert out[-1] == "data: [DONE]\n\n"
+    events = _parse_sse(_consume(rag.stream_chat("q", "X", [])))
+    error_events = [d for e, d in events if e == "error"]
+    assert error_events and "simulated upstream failure" in error_events[0]["error"]

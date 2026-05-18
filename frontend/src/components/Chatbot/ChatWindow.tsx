@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useStock } from '../../context/StockContext'
 import { streamChat } from '../../api/client'
-import type { Message } from '../../types'
+import Markdown from '../Markdown'
+import type { Message, ChatSource } from '../../types'
 
 const WELCOME: Message = {
   role: 'assistant',
@@ -13,6 +14,7 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
   const [messages, setMessages] = useState<Message[]>([WELCOME])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [expandedSource, setExpandedSource] = useState<{ msgIdx: number; id: number } | null>(null)
   const { ticker, ratios } = useStock()
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -38,39 +40,28 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
     ])
     setStreaming(true)
 
-    try {
-      await streamChat(question, ticker, ratios, history,
-        token => {
-          setMessages(prev => {
-            const next = [...prev]
-            const last = next[next.length - 1]
-            if (last?.role === 'assistant')
-              next[next.length - 1] = { ...last, content: last.content + token }
-            return next
-          })
-        },
-        () => {
-          setMessages(prev => {
-            const next = [...prev]
-            const last = next[next.length - 1]
-            if (last?.role === 'assistant')
-              next[next.length - 1] = { ...last, streaming: false }
-            return next
-          })
-          setStreaming(false)
-          inputRef.current?.focus()
-        },
-      )
-    } catch {
+    const updateLastAssistant = (patch: (m: Message) => Message) => {
       setMessages(prev => {
         const next = [...prev]
-        next[next.length - 1] = {
-          role: 'assistant',
-          content: 'An error occurred. Please check your API key and try again.',
-          streaming: false,
-        }
+        const last = next[next.length - 1]
+        if (last?.role === 'assistant') next[next.length - 1] = patch(last)
         return next
       })
+    }
+
+    try {
+      await streamChat(
+        question, ticker, ratios, history,
+        token  => updateLastAssistant(m => ({ ...m, content: m.content + token })),
+        ()     => { updateLastAssistant(m => ({ ...m, streaming: false })); setStreaming(false); inputRef.current?.focus() },
+        items  => updateLastAssistant(m => ({ ...m, sources: items })),
+      )
+    } catch {
+      updateLastAssistant(() => ({
+        role: 'assistant',
+        content: 'An error occurred. Please check your API key and try again.',
+        streaming: false,
+      }))
       setStreaming(false)
     }
   }
@@ -80,7 +71,6 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
       className="h-full flex flex-col overflow-hidden"
       style={{ background: 'transparent' }}
     >
-      {/* Header — only shown when not inside ChatDrawer */}
       {!hideHeader && (
         <div
           className="border-b px-4 py-3 flex items-center gap-2.5 flex-shrink-0"
@@ -137,7 +127,7 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
                   : {
                       borderRadius: '18px 18px 18px 4px',
                       background: '#3A3A3C',
-                      color: 'rgba(235,235,245,0.75)',
+                      color: 'rgba(235,235,245,0.85)',
                       border: '1px solid rgba(255,255,255,0.06)',
                     }
               }
@@ -152,16 +142,18 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
                     />
                   ))}
                 </span>
+              ) : msg.role === 'assistant' ? (
+                <AssistantBody
+                  msg={msg}
+                  expandedId={expandedSource?.msgIdx === i ? expandedSource.id : null}
+                  onCitationClick={id =>
+                    setExpandedSource(prev =>
+                      prev?.msgIdx === i && prev.id === id ? null : { msgIdx: i, id },
+                    )
+                  }
+                />
               ) : (
-                <>
-                  {msg.content}
-                  {msg.streaming && (
-                    <span
-                      className="inline-block w-0.5 h-3.5 ml-0.5 animate-pulse align-text-bottom"
-                      style={{ background: 'rgba(235,235,245,0.6)' }}
-                    />
-                  )}
-                </>
+                msg.content
               )}
             </div>
           </div>
@@ -204,6 +196,85 @@ export default function ChatWindow({ hideHeader = false }: { hideHeader?: boolea
           </svg>
         </button>
       </div>
+    </div>
+  )
+}
+
+function AssistantBody({
+  msg, expandedId, onCitationClick,
+}: {
+  msg: Message
+  expandedId: number | null
+  onCitationClick: (id: number) => void
+}) {
+  const sources = msg.sources ?? []
+  return (
+    <>
+      <Markdown text={msg.content} citations={sources} onCitationClick={onCitationClick} />
+      {msg.streaming && (
+        <span
+          className="inline-block w-0.5 h-3.5 ml-0.5 animate-pulse align-text-bottom"
+          style={{ background: 'rgba(235,235,245,0.6)' }}
+        />
+      )}
+      {sources.length > 0 && !msg.streaming && (
+        <SourcesStrip
+          sources={sources}
+          expandedId={expandedId}
+          onToggle={onCitationClick}
+        />
+      )}
+    </>
+  )
+}
+
+function SourcesStrip({
+  sources, expandedId, onToggle,
+}: {
+  sources: ChatSource[]
+  expandedId: number | null
+  onToggle: (id: number) => void
+}) {
+  const expanded = sources.find(s => s.id === expandedId) ?? null
+  return (
+    <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+      <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: 'rgba(235,235,245,0.45)' }}>
+        Sources
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {sources.map(s => {
+          const active = s.id === expandedId
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onToggle(s.id)}
+              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full transition-colors"
+              style={{
+                background: active ? 'rgba(10,132,255,0.25)' : 'rgba(255,255,255,0.06)',
+                color:      active ? '#0A84FF' : 'rgba(235,235,245,0.7)',
+                border:     `1px solid ${active ? 'rgba(10,132,255,0.45)' : 'rgba(255,255,255,0.08)'}`,
+              }}
+            >
+              <span className="font-bold">{s.id}</span>
+              <span className="font-mono">{s.source}</span>
+            </button>
+          )
+        })}
+      </div>
+      {expanded && (
+        <div
+          className="mt-2 px-2.5 py-2 rounded-lg text-[11px] leading-relaxed font-mono"
+          style={{
+            background: 'rgba(10,132,255,0.06)',
+            border:     '1px solid rgba(10,132,255,0.18)',
+            color:      'rgba(235,235,245,0.75)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {expanded.snippet}
+        </div>
+      )}
     </div>
   )
 }
