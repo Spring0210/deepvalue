@@ -296,10 +296,10 @@
 
 ### 7.6 Agent UI
 
-- [x] Natural-language entry: new `Agent` sidebar section (`AgentPanel.tsx`) with a query textarea + ⌘/Ctrl+Enter to run, posts to `/api/agent/stream`.
-- [x] **Live trace panel** — streams each step (LLM / TOOL_BATCH / REPAIR / FINAL / ERROR) as cards. Tool results show ok/fail icon, latency, attempt count, expandable JSON preview. LLM cards show usage (tokens, cost, latency). Footer summary shows status + total steps + wall-clock + total cost + token totals. Abortable mid-run via Stop button (AbortController).
-- [ ] **Final report** — structured sections: Summary · Fundamentals · Valuation · News · Technicals · Risks · Verdict
-- [ ] **Sources** — every claim links back to its tool call or filing chunk
+- [x] Natural-language entry: new `Agent` sidebar section (`AgentPanel.tsx`) with a query textarea + ⌘/Ctrl+Enter to run, posts to `/api/agent/stream`. **Update:** Single-agent / Multi-agent toggle now lives in the panel header. Multi-agent mode posts to `/api/agent/orchestrate/stream` instead.
+- [x] **Live trace panel** — streams each step (LLM / TOOL_BATCH / REPAIR / FINAL / ERROR) as cards. Tool results show ok/fail icon, latency, attempt count, expandable JSON preview. LLM cards show usage (tokens, cost, latency). Footer summary shows status + total steps + wall-clock + total cost + token totals. Abortable mid-run via Stop button (AbortController). **Update:** Multi-agent trace renders `plan` → `subagent` (per-ticker Finding cards w/ summary + bullets + tool-name citation chips) → `synth` (final Buffett-format report) as a separate event sequence; OrchSummaryBar shows `n_findings / n_subagents` on top of the existing cost rollup.
+- [x] **Final report** — structured sections (multi-agent mode): per-subagent Finding cards act as role-specific sections, then a final Synthesis card with the standard Buffett verdict layout. The single-section list ("Summary · Fundamentals · Valuation · News · Technicals · Risks · Verdict") will be revisited once more subagents land.
+- [x] **Sources** — every Finding shows its `citations` (tool names) as small chips, so the reader can trace every bullet back to a tool result. Inline per-claim deep-links wait on persistence (Phase 8).
 - [ ] PDF export of the agent report
 
 ---
@@ -466,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-17 · v0.6-alpha (Phase 7.2 MVP — Orchestrator + Fundamentals subagent + structured Finding contract + 2 new endpoints)*
+*Last updated: 2026-05-17 · v0.6-beta (Phase 7.2 MVP + Phase 7.6 multi-agent UI — single/multi toggle, plan + finding + synthesis cards, citation chips)*

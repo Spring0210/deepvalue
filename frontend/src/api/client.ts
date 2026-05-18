@@ -2,6 +2,7 @@ import axios from 'axios'
 import type {
   BuffettRatio, StockFinancials, StockQuote, StockValuation, MoatResult, PriceHistory,
   AgentStep, AgentRunSummary,
+  OrchestratorStep, OrchestratorRunSummary,
 } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
@@ -139,6 +140,46 @@ export async function streamAgent(
       ((data as { error?: string })?.error) || 'Unknown agent error',
     )
     else                         onStep(data as AgentStep)
+  })
+}
+
+// ── Multi-agent (Orchestrator) SSE ───────────────────────────────────────────
+
+export async function streamOrchestrate(
+  query: string,
+  onStep:  (step: OrchestratorStep) => void,
+  onDone:  (summary: OrchestratorRunSummary) => void,
+  onError: (message: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch('/api/agent/orchestrate/stream', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ query }),
+      signal,
+    })
+  } catch (err) {
+    if ((err as { name?: string })?.name === 'AbortError') return
+    onError((err as Error).message || 'Network error')
+    return
+  }
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = await response.json()
+      if (body?.detail) detail = _stringifyDetail(body.detail)
+    } catch { /* ignore */ }
+    onError(detail)
+    return
+  }
+  await _readEventSSE(response, (event, data) => {
+    if (event === 'done')       onDone(data as OrchestratorRunSummary)
+    else if (event === 'error') onError(
+      ((data as { error?: string })?.error) || 'Unknown orchestrator error',
+    )
+    else                        onStep(data as OrchestratorStep)
   })
 }
 

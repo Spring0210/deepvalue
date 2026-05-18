@@ -1,12 +1,20 @@
 import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { streamAgent } from '../../api/client'
-import type { AgentRunSummary, AgentStep, AgentToolCall, AgentToolResult } from '../../types'
+import { streamAgent, streamOrchestrate } from '../../api/client'
+import type {
+  AgentRunSummary, AgentStep, AgentToolCall, AgentToolResult,
+  Finding, OrchestratorRunSummary, OrchestratorStep, ResearchPlan, SubagentRole,
+} from '../../types'
+
+type Mode = 'single' | 'multi'
 
 export default function AgentPanel() {
-  const [query,   setQuery]   = useState('')
-  const [steps,   setSteps]   = useState<AgentStep[]>([])
-  const [summary, setSummary] = useState<AgentRunSummary | null>(null)
+  const [query,    setQuery]    = useState('')
+  const [mode,     setMode]     = useState<Mode>('single')
+  const [steps,    setSteps]    = useState<AgentStep[]>([])
+  const [summary,  setSummary]  = useState<AgentRunSummary | null>(null)
+  const [orchSteps,   setOrchSteps]   = useState<OrchestratorStep[]>([])
+  const [orchSummary, setOrchSummary] = useState<OrchestratorRunSummary | null>(null)
   const [running, setRunning] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -14,21 +22,37 @@ export default function AgentPanel() {
 
   useEffect(() => {
     traceEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [steps.length, summary, error])
+  }, [steps.length, orchSteps.length, summary, orchSummary, error])
+
+  function reset() {
+    setSteps([]); setSummary(null)
+    setOrchSteps([]); setOrchSummary(null)
+    setError(null)
+  }
 
   async function handleRun() {
     if (!query.trim() || running) return
-    setSteps([]); setSummary(null); setError(null); setRunning(true)
+    reset(); setRunning(true)
     const ctrl = new AbortController()
     abortRef.current = ctrl
     try {
-      await streamAgent(
-        query.trim(),
-        s   => setSteps(prev => [...prev, s]),
-        sum => setSummary(sum),
-        msg => setError(msg),
-        ctrl.signal,
-      )
+      if (mode === 'single') {
+        await streamAgent(
+          query.trim(),
+          s   => setSteps(prev => [...prev, s]),
+          sum => setSummary(sum),
+          msg => setError(msg),
+          ctrl.signal,
+        )
+      } else {
+        await streamOrchestrate(
+          query.trim(),
+          s   => setOrchSteps(prev => [...prev, s]),
+          sum => setOrchSummary(sum),
+          msg => setError(msg),
+          ctrl.signal,
+        )
+      }
     } catch (e) {
       const err = e as Error
       if (err?.name !== 'AbortError') setError(err.message || String(e))
@@ -40,8 +64,18 @@ export default function AgentPanel() {
 
   function handleStop() { abortRef.current?.abort() }
 
+  const hasOutput = mode === 'single' ? steps.length > 0 : orchSteps.length > 0
+  const activeSummary = mode === 'single' ? summary : orchSummary
+
   return (
     <div className="space-y-4">
+      {/* Mode toggle */}
+      <ModeToggle
+        mode={mode}
+        disabled={running}
+        onChange={m => { if (m !== mode) { setMode(m); reset() } }}
+      />
+
       {/* Query */}
       <div className="rounded-xl p-3"
         style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -51,7 +85,11 @@ export default function AgentPanel() {
           onKeyDown={e => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleRun() }
           }}
-          placeholder="Ask anything — e.g. &quot;Should I buy NVDA?&quot; or &quot;Compare AAPL vs MSFT in services revenue.&quot;"
+          placeholder={
+            mode === 'single'
+              ? 'Ask anything — e.g. "Should I buy NVDA?" or "Compare AAPL vs MSFT in services revenue."'
+              : 'Ask a research question — the planner picks specialists per ticker. e.g. "Analyze AAPL through a Buffett lens."'
+          }
           rows={2}
           disabled={running}
           className="w-full bg-transparent outline-none resize-none text-sm"
@@ -73,33 +111,45 @@ export default function AgentPanel() {
               disabled={!query.trim()}
               className="rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ background: '#0A84FF', color: 'white' }}
-            >Run agent</button>
+            >{mode === 'single' ? 'Run agent' : 'Run pipeline'}</button>
           )}
         </div>
       </div>
 
       {/* Empty state */}
-      {steps.length === 0 && !running && !error && (
+      {!hasOutput && !running && !error && (
         <div className="text-center py-10" style={{ color: 'rgba(235,235,245,0.35)' }}>
-          <p className="text-sm">The orchestrator picks its own tools and streams every step live.</p>
-          <p className="text-xs mt-1" style={{ color: 'rgba(235,235,245,0.22)' }}>
-            Available tools: get_stock_quote · get_buffett_score · get_valuation · get_moat · get_price_history · get_technicals
-          </p>
+          {mode === 'single' ? (
+            <>
+              <p className="text-sm">The orchestrator picks its own tools and streams every step live.</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(235,235,245,0.22)' }}>
+                Available tools: get_stock_quote · get_buffett_score · get_valuation · get_moat · get_price_history · get_technicals
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm">Planner → specialist subagents (parallel) → Synthesizer.</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(235,235,245,0.22)' }}>
+                Specialists: <span style={{ color: 'rgba(235,235,245,0.45)' }}>fundamentals</span>{' '}
+                <span style={{ color: 'rgba(235,235,245,0.22)' }}>· news · technical · valuation · risk</span>{' '}
+                <span style={{ color: 'rgba(235,235,245,0.22)' }}>(reserved)</span>
+              </p>
+            </>
+          )}
         </div>
       )}
 
       {/* Live trace */}
-      {steps.length > 0 && (
+      {mode === 'single' && steps.length > 0 && (
         <div className="space-y-2">
           {steps.map((step, i) => <StepCard key={i} step={step} />)}
-          {running && (
-            <div className="flex items-center gap-2 px-3 py-2 text-xs"
-              style={{ color: 'rgba(235,235,245,0.4)' }}>
-              <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: 'rgba(10,132,255,0.2)', borderTopColor: '#0A84FF' }} />
-              <span>Working…</span>
-            </div>
-          )}
+          {running && <WorkingIndicator />}
+        </div>
+      )}
+      {mode === 'multi' && orchSteps.length > 0 && (
+        <div className="space-y-2">
+          {orchSteps.map((step, i) => <OrchStepCard key={i} step={step} />)}
+          {running && <WorkingIndicator />}
         </div>
       )}
 
@@ -113,14 +163,58 @@ export default function AgentPanel() {
       )}
 
       {/* Run summary */}
-      {summary && <SummaryBar summary={summary} stepCount={steps.length} />}
+      {activeSummary && (
+        mode === 'single'
+          ? <SummaryBar summary={summary!} stepCount={steps.length} />
+          : <OrchSummaryBar summary={orchSummary!} stepCount={orchSteps.length} />
+      )}
 
       <div ref={traceEndRef} />
     </div>
   )
 }
 
-// ── Step cards ───────────────────────────────────────────────────────────────
+// ── Mode toggle ──────────────────────────────────────────────────────────────
+
+function ModeToggle({ mode, disabled, onChange }: {
+  mode: Mode; disabled: boolean; onChange: (m: Mode) => void
+}) {
+  return (
+    <div className="inline-flex rounded-lg p-0.5"
+      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+      {(['single', 'multi'] as Mode[]).map(m => {
+        const active = m === mode
+        return (
+          <button
+            key={m}
+            onClick={() => onChange(m)}
+            disabled={disabled}
+            className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-40"
+            style={{
+              background: active ? '#0A84FF' : 'transparent',
+              color:      active ? 'white'   : 'rgba(235,235,245,0.6)',
+            }}
+          >
+            {m === 'single' ? 'Single agent' : 'Multi-agent'}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function WorkingIndicator() {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 text-xs"
+      style={{ color: 'rgba(235,235,245,0.4)' }}>
+      <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
+        style={{ borderColor: 'rgba(10,132,255,0.2)', borderTopColor: '#0A84FF' }} />
+      <span>Working…</span>
+    </div>
+  )
+}
+
+// ── Single-agent step cards ──────────────────────────────────────────────────
 
 function StepCard({ step }: { step: AgentStep }) {
   switch (step.kind) {
@@ -256,6 +350,139 @@ function FinalStepCard({ step }: { step: AgentStep }) {
   )
 }
 
+// ── Multi-agent step cards ───────────────────────────────────────────────────
+
+function OrchStepCard({ step }: { step: OrchestratorStep }) {
+  switch (step.kind) {
+    case 'plan':     return <PlanStepCard     step={step} />
+    case 'subagent': return <SubagentStepCard step={step} />
+    case 'synth':    return null  // Synth and Final carry the same text; show only Final.
+    case 'final':    return <SynthFinalStepCard text={step.text || ''} />
+    case 'error':    return <OrchErrorStepCard  step={step} />
+  }
+}
+
+function PlanStepCard({ step }: { step: OrchestratorStep }) {
+  const plan: ResearchPlan | null | undefined = step.plan
+  if (!plan) return null
+  return (
+    <StepFrame kind="Plan" accent="#0A84FF">
+      <p className="text-[13px] leading-relaxed mb-2" style={{ color: '#F5F5F7' }}>
+        {plan.rationale}
+      </p>
+      <div className="space-y-1">
+        {plan.subtasks.map((t, i) => (
+          <div key={i} className="flex items-center gap-2 text-[12px]"
+            style={{ color: 'rgba(235,235,245,0.7)' }}>
+            <RoleChip role={t.role} />
+            <span className="font-mono" style={{ color: '#F5F5F7' }}>{t.ticker}</span>
+            {t.focus && (
+              <span className="text-[11px]" style={{ color: 'rgba(235,235,245,0.4)' }}>
+                — {t.focus}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </StepFrame>
+  )
+}
+
+function SubagentStepCard({ step }: { step: OrchestratorStep }) {
+  const ok = !!step.finding && !step.error
+  const accent = ok ? '#30D158' : '#FF453A'
+  return (
+    <div className="rounded-xl p-3"
+      style={{ background: '#1F1F22', border: `1px solid ${accent}33` }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+          style={{ background: `${accent}22`, color: accent }}>
+          {ok ? 'Finding' : 'Subagent failed'}
+        </span>
+        {step.role && <RoleChip role={step.role} />}
+        {step.ticker && (
+          <span className="font-mono text-[12px]" style={{ color: '#F5F5F7' }}>{step.ticker}</span>
+        )}
+      </div>
+      {ok && step.finding ? (
+        <FindingBody finding={step.finding} />
+      ) : (
+        <p className="text-[12px] font-mono" style={{ color: '#FF453A' }}>
+          {step.error || 'Unknown error'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function FindingBody({ finding }: { finding: Finding }) {
+  return (
+    <div style={{ color: 'rgba(235,235,245,0.85)' }}>
+      <p className="text-[13px] leading-relaxed mb-2">{finding.summary}</p>
+      {finding.bullets.length > 0 && (
+        <ul className="list-disc ml-5 space-y-0.5 text-[12.5px] leading-relaxed mb-2"
+          style={{ color: 'rgba(235,235,245,0.8)' }}>
+          {finding.bullets.map((b, i) => <li key={i}>{b}</li>)}
+        </ul>
+      )}
+      {finding.citations.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {finding.citations.map(c => (
+            <span key={c} className="font-mono text-[10px] px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(94,92,230,0.15)', color: '#5E5CE6' }}>
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SynthFinalStepCard({ text }: { text: string }) {
+  return (
+    <div className="rounded-xl p-4"
+      style={{ background: 'rgba(48,209,88,0.06)', border: '1px solid rgba(48,209,88,0.25)' }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+          style={{ background: 'rgba(48,209,88,0.15)', color: '#30D158' }}>
+          Synthesis
+        </span>
+      </div>
+      {text
+        ? <MarkdownLite text={text} />
+        : <p className="text-[13px]" style={{ color: 'rgba(235,235,245,0.5)' }}>(empty)</p>}
+    </div>
+  )
+}
+
+function OrchErrorStepCard({ step }: { step: OrchestratorStep }) {
+  return (
+    <StepFrame kind="Error" accent="#FF453A">
+      <p className="text-[12px] font-mono" style={{ color: '#FF453A' }}>
+        {step.error || 'Unknown error'}
+      </p>
+    </StepFrame>
+  )
+}
+
+function RoleChip({ role }: { role: SubagentRole }) {
+  const colors: Record<SubagentRole, string> = {
+    fundamentals: '#5E5CE6',
+    news:         '#FF9F0A',
+    technical:    '#64D2FF',
+    valuation:    '#BF5AF2',
+    risk:         '#FF453A',
+  }
+  const c = colors[role]
+  return (
+    <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+      style={{ background: `${c}22`, color: c }}>
+      {role}
+    </span>
+  )
+}
+
 // Tiny markdown renderer for the orchestrator's final answer.
 // The agent's output shape is fixed by the system prompt — `##`/`###`
 // headings, `**bold**` for key numbers, `- ` bullets, blank-line paragraphs.
@@ -361,6 +588,33 @@ function SummaryBar({ summary, stepCount }: { summary: AgentRunSummary; stepCoun
         </span>
         <span>·</span>
         <span>{stepCount} steps</span>
+        <span>·</span>
+        <span>{(summary.total_latency_ms / 1000).toFixed(2)}s</span>
+      </div>
+      <div className="font-mono">
+        ${summary.total_cost_usd.toFixed(4)} · {summary.total_input_tokens} in /{' '}
+        {summary.total_output_tokens} out
+      </div>
+    </div>
+  )
+}
+
+function OrchSummaryBar({ summary, stepCount }: { summary: OrchestratorRunSummary; stepCount: number }) {
+  const color =
+    summary.status === 'completed' ? '#30D158'
+    : summary.status === 'capped'  ? '#FF9F0A'
+    :                                '#FF453A'
+  return (
+    <div className="rounded-xl px-4 py-2.5 flex items-center justify-between text-xs"
+      style={{ background: '#1F1F22', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(235,235,245,0.6)' }}>
+      <div className="flex items-center gap-2">
+        <span style={{ color, fontWeight: 600, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.06em' }}>
+          {summary.status}
+        </span>
+        <span>·</span>
+        <span>{stepCount} steps</span>
+        <span>·</span>
+        <span>{summary.n_findings}/{summary.n_subagents} findings</span>
         <span>·</span>
         <span>{(summary.total_latency_ms / 1000).toFixed(2)}s</span>
       </div>

@@ -155,3 +155,53 @@ export interface AgentRunSummary {
   total_output_tokens: number
   error:               string | null
 }
+
+// ── Multi-agent (Orchestrator) wire types — mirror app/agent/models.py ───────
+
+export type SubagentRole = 'fundamentals' | 'news' | 'technical' | 'valuation' | 'risk'
+
+export interface Subtask {
+  role:   SubagentRole
+  ticker: string
+  focus?: string | null
+}
+
+export interface ResearchPlan {
+  rationale: string
+  subtasks:  Subtask[]
+}
+
+export interface Finding {
+  role:      SubagentRole
+  ticker:    string
+  summary:   string
+  bullets:   string[]
+  citations: string[]
+}
+
+export type OrchestratorStepKind = 'plan' | 'subagent' | 'synth' | 'final' | 'error'
+
+export interface OrchestratorStep {
+  idx:        number
+  kind:       OrchestratorStepKind
+  started_at: number
+  plan?:      ResearchPlan | null
+  role?:      SubagentRole | null
+  ticker?:    string | null
+  finding?:   Finding | null
+  text?:      string | null
+  error?:     string | null
+}
+
+export interface OrchestratorRunSummary {
+  id:                  string
+  status:              'running' | 'completed' | 'failed' | 'capped'
+  final_text:          string | null
+  n_subagents:         number
+  n_findings:          number
+  total_cost_usd:      number
+  total_latency_ms:    number
+  total_input_tokens:  number
+  total_output_tokens: number
+  error:               string | null
+}
