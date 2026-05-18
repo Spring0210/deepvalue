@@ -161,10 +161,15 @@ def retrieve(query: str, k: int = 3) -> str:
 
 def _build_chat_system_message() -> str:
     return (
-        "You are an expert investment analyst well-versed in Warren Buffett's investment philosophy. "
-        "Use the provided financial data and Buffett's principles to answer the user's questions. "
+        "You are an expert investment analyst grounded in the classical value-investing tradition — "
+        "Graham's margin of safety, Buffett's durable competitive advantage, Munger's mental models, "
+        "Klarman's risk-first mindset, and modern practitioners who combine these with disciplined "
+        "DCF / FCF-yield analysis. Treat the provided knowledge base as authoritative excerpts from "
+        "that tradition; the corpus may include multiple authors and sources, so do not assume any "
+        "single name unless the cited chunk identifies one. "
+        "Use the financial data and the retrieved principles to answer the user's questions. "
         "Be specific, concise, and reference actual numbers when available. "
-        "When you state a fact drawn from the BUFFETT KNOWLEDGE BASE, cite the chunk number "
+        "When you state a fact drawn from the VALUE INVESTING KNOWLEDGE BASE, cite the chunk number "
         "inline as [1], [2], etc., matching the bracketed ids in the context. "
         "Do not make direct buy/sell recommendations — provide objective analysis. "
         "Format the response in concise Markdown (short paragraphs, bullet lists where it helps). "
@@ -194,7 +199,7 @@ def _build_chat_user_message(
     )
 
     user_msg = (
-        "─── BUFFETT KNOWLEDGE BASE ───\n"
+        "─── VALUE INVESTING KNOWLEDGE BASE ───\n"
         f"{rag_context}\n\n"
         "─── CURRENT STOCK DATA ───\n"
         f"{stock_context}\n\n"
@@ -213,7 +218,7 @@ def _build_recommendation_prompt(
     """Returns (system_message, user_message)."""
     sector   = quote.get("sector", "")
     industry = quote.get("industry", "")
-    rag_query = f"Warren Buffett {sector} {industry} competitive advantage moat valuation"
+    rag_query = f"value investing {sector} {industry} competitive advantage moat margin of safety"
     rag_context = retrieve(rag_query, k=4)
 
     def pct(v):
@@ -248,7 +253,7 @@ def _build_recommendation_prompt(
         snapshot += f"Business: {summary}\n"
 
     score_line = (
-        f"\nBUFFETT WEIGHTED SCORE: {weighted_score:.1f}/100  "
+        f"\nVALUE-INVESTING WEIGHTED SCORE: {weighted_score:.1f}/100  "
         f"({'Strong moat zone' if weighted_score >= 70 else 'Watch zone' if weighted_score >= 55 else 'Avoid zone'})\n"
     )
 
@@ -271,14 +276,22 @@ def _build_recommendation_prompt(
         metrics_block += f"\n{cat}:\n" + "\n".join(lines) + "\n"
 
     system_msg = (
-        "You are a senior equity analyst at a value-focused investment firm. "
-        "You combine Warren Buffett's timeless principles — durable competitive advantage, "
-        "honest management, predictable earnings, sensible price — with modern metrics "
-        "like ROIC, FCF yield, and PEG ratio. "
+        "You are a senior equity analyst at a value-focused investment firm. You reason in the "
+        "classical value-investing tradition — Graham's margin of safety, Buffett's durable "
+        "competitive advantage, Munger's quality-at-a-fair-price, Klarman's risk-first mindset — "
+        "and blend that with modern metrics (ROIC, FCF yield, PEG, EV/EBITDA). The retrieved "
+        "knowledge-base excerpts may originate from multiple authors; treat them as the value-"
+        "investing canon rather than any single voice. "
         "Your analysis must be concrete, data-driven, and sector-aware. "
         "Avoid generic statements. Every claim must be backed by a specific number from the data provided.\n\n"
+        "STRICT OUTPUT RULES:\n"
+        "- Plain text only. Do NOT use Markdown syntax: no '#' headings, no '*' or '**' bold, "
+        "no backticks, no Markdown bullets with asterisks.\n"
+        "- Section headers are uppercase plain words followed by a colon, exactly as in the example.\n"
+        "- Use a leading '- ' (hyphen + space) for each bullet line. Nothing else.\n"
+        "- Numbers, percentages, and ratios stand on their own — the renderer will style them.\n\n"
         "EXAMPLE OUTPUT (follow this format and quality level exactly):\n\n"
-        "VERDICT: BUY — KO earns a Buffett score of 82/100; six decades of brand moat "
+        "VERDICT: BUY — KO earns a value-investing score of 82/100; six decades of brand moat "
         "and a 24.1% net margin at a reasonable 22x forward P/E justify a long-term position.\n\n"
         "STRENGTHS:\n"
         "- Gross margin of 58.1% (threshold ≥40%) reflects unmatched pricing power; "
@@ -290,36 +303,42 @@ def _build_recommendation_prompt(
         "markets, capping the long-term earnings compounding rate.\n"
         "- SG&A at 28.7% of gross profit is near the 30% ceiling; any incremental spend on "
         "health-conscious line extensions could breach the threshold.\n\n"
-        "BUFFETT ALIGNMENT:\n"
+        "VALUE INVESTING ALIGNMENT:\n"
         "KO has a textbook wide moat — global distribution and brand intangibles have held for "
-        "six decades. At 22x forward earnings and a 3.1% FCF yield, the price is fair but not a bargain.\n\n"
+        "six decades. At 22x forward earnings and a 3.1% FCF yield, the price is fair but offers "
+        "little margin of safety in the Graham sense.\n\n"
         "MODERN CONTEXT:\n"
         "Health-trend headwinds require a conservative 2–3% DCF terminal growth rate rather than "
-        "the 4–5% Buffett could have assumed in the 1980s; the moat is durable but narrower than it once was.\n\n"
+        "the 4–5% one could have assumed in the 1980s; the moat is durable but narrower than before.\n\n"
         "--- END EXAMPLE ---"
     )
 
     user_msg = (
-        "─── BUFFETT PRINCIPLES (RAG) ───\n"
+        "─── VALUE INVESTING PRINCIPLES (RAG) ───\n"
         f"{rag_context}\n\n"
         "─── STOCK SNAPSHOT ───\n"
         f"{snapshot}"
         f"{score_line}"
         f"{metrics_block}\n"
         "─── OUTPUT FORMAT ───\n"
-        "Write exactly these five sections. Be specific. Cite actual numbers.\n\n"
+        "Write exactly these five sections, plain text only (no Markdown). Be specific, cite actual numbers.\n\n"
         "VERDICT: [BUY / HOLD / AVOID] — one sentence with the core reason and the weighted score\n\n"
         "STRENGTHS:\n"
-        "- 2–3 bullet points. Each must cite a specific metric value and explain WHY it signals a competitive advantage\n"
-        "  Example: 'Gross margin of 47.3% (threshold ≥40%) signals pricing power — Apple charges premium prices competitors cannot match'\n\n"
+        "- 2–3 bullet points. Each must cite a specific metric value and explain WHY it signals "
+        "a competitive advantage or quality earnings.\n"
+        "  Example: 'Gross margin of 47.3% (threshold ≥40%) signals pricing power — Apple charges "
+        "premium prices competitors cannot match.'\n\n"
         "CONCERNS:\n"
-        "- 2–3 bullet points. Cite specific failing or borderline metrics and explain the investment risk they represent\n\n"
-        "BUFFETT ALIGNMENT:\n"
-        "- 2 sentences. Assess: (1) Does this company have a durable moat? "
-        "(2) Is the current price sensible given the quality (reference P/E or FCF yield)?\n\n"
+        "- 2–3 bullet points. Cite specific failing or borderline metrics and explain the "
+        "investment risk they represent.\n\n"
+        "VALUE INVESTING ALIGNMENT:\n"
+        "- 2 sentences. Assess: (1) Does this company have a durable moat / quality earnings? "
+        "(2) Is the current price sensible given the quality — is there a Graham margin of safety, "
+        "or only a Buffett-style fair price for a great business?\n\n"
         "MODERN CONTEXT:\n"
-        "- 1–2 sentences. Which Buffett rules need reinterpretation for this company's sector/era, and why?\n\n"
-        "Total length: 300–400 words. Tone: decisive, analytical, institutional."
+        "- 1–2 sentences. Which classical rules need reinterpretation for this company's "
+        "sector/era (e.g. asset-light tech, recurring SaaS revenue, network effects), and why?\n\n"
+        "Total length: 300–400 words. Tone: decisive, analytical, institutional. Plain text only."
     )
 
     return system_msg, user_msg

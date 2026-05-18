@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useState, useRef } from 'react'
 import { useStock } from '../../context/StockContext'
 import { streamRecommendation } from '../../api/client'
@@ -32,7 +33,7 @@ function ScoreGauge({ score }: { score: number }) {
       </div>
       <span className="text-xs font-medium mt-1" style={{ color }}>{label}</span>
       <span className="text-[11px] mt-0.5" style={{ color: 'rgba(235,235,245,0.3)' }}>
-        Weighted Buffett Score
+        Weighted Value-Investing Score
       </span>
     </div>
   )
@@ -77,68 +78,164 @@ function WeightBreakdown({ ratios }: { ratios: ReturnType<typeof useStock>['rati
 }
 
 // ── Recommendation text renderer (parses sections) ───────────────────────────
+
+// Strip Markdown leakage from the LLM output. The system prompt asks for plain
+// text, but real models still sometimes emit **bold**, `code`, or a stray '#'.
+// We render through a custom layout (not a Markdown engine), so any leftover
+// syntax would otherwise show literally — strip it defensively.
+function sanitize(line: string): string {
+  return line
+    .replace(/\*\*([^*]+)\*\*/g, '$1')     // **bold** → bold
+    .replace(/(^|\s)\*([^*\s][^*]*)\*/g, '$1$2')  // *italic* → italic (avoid '* ' bullets)
+    .replace(/`([^`]+)`/g, '$1')           // `code` → code
+    .replace(/^#{1,6}\s+/, '')             // leading '#' headings
+    .replace(/^\*\s+/, '- ')               // '* bullet' → '- bullet'
+}
+
+// Section-aware accent colors. Order of keys matters — first match wins.
+const SECTION_STYLES: Array<{ match: RegExp; color: string; label: string }> = [
+  { match: /^STRENGTHS\b/i,                 color: '#30D158', label: 'Strengths' },
+  { match: /^CONCERNS\b/i,                  color: '#FF9F0A', label: 'Concerns' },
+  { match: /^(VALUE\s+INVESTING\s+ALIGNMENT|BUFFETT\s+ALIGNMENT|ALIGNMENT)\b/i,
+                                            color: '#0A84FF', label: 'Value Investing Alignment' },
+  { match: /^MODERN\s+CONTEXT\b/i,          color: '#BF5AF2', label: 'Modern Context' },
+]
+
+function classifySection(raw: string): { color: string; label: string } | null {
+  const trimmed = raw.replace(/:$/, '').trim()
+  for (const s of SECTION_STYLES) if (s.match.test(trimmed)) return { color: s.color, label: s.label }
+  return null
+}
+
+// Bold the first number-with-unit in a bullet so the eye lands on the metric.
+function emphasizeNumber(text: string): ReactNode {
+  // Match things like "47.3%", "3.1%", "22x", "$1.2B", "82/100", "0.85"
+  const m = text.match(/(-?\d[\d,]*\.?\d*\s*(?:%|x|×|B|M|T|K|\/100)?)/)
+  if (!m || m.index === undefined) return text
+  const before = text.slice(0, m.index)
+  const num    = m[0]
+  const after  = text.slice(m.index + num.length)
+  return (
+    <>
+      {before}
+      <span className="font-semibold tabular-nums" style={{ color: '#F5F5F7' }}>{num}</span>
+      {after}
+    </>
+  )
+}
+
+type Block =
+  | { kind: 'verdict'; content: string }
+  | { kind: 'section'; color: string; label: string }
+  | { kind: 'bullet';  text: string; color: string }
+  | { kind: 'para';    text: string }
+  | { kind: 'gap' }
+
+function parseRecommendation(text: string): Block[] {
+  const blocks: Block[] = []
+  let currentColor = 'rgba(235,235,245,0.55)'   // default before any section
+
+  for (const raw of text.split('\n')) {
+    const line = sanitize(raw).trimEnd()
+    const trimmed = line.trim()
+
+    if (!trimmed) { blocks.push({ kind: 'gap' }); continue }
+
+    if (/^VERDICT\s*:/i.test(trimmed)) {
+      blocks.push({ kind: 'verdict', content: trimmed.replace(/^VERDICT\s*:\s*/i, '') })
+      continue
+    }
+
+    if (/^[A-Z][A-Z\s&-]+:\s*$/.test(trimmed)) {
+      const cls = classifySection(trimmed)
+      if (cls) {
+        currentColor = cls.color
+        blocks.push({ kind: 'section', color: cls.color, label: cls.label })
+      } else {
+        // Unknown uppercase header — render as muted section label.
+        currentColor = 'rgba(235,235,245,0.55)'
+        blocks.push({ kind: 'section', color: currentColor, label: trimmed.replace(/:$/, '') })
+      }
+      continue
+    }
+
+    if (/^[-•]\s+/.test(trimmed)) {
+      blocks.push({ kind: 'bullet', text: trimmed.replace(/^[-•]\s+/, ''), color: currentColor })
+      continue
+    }
+
+    blocks.push({ kind: 'para', text: trimmed })
+  }
+  return blocks
+}
+
 function RecommendationText({ text, streaming }: { text: string; streaming: boolean }) {
   if (!text) return null
 
-  const lines = text.split('\n')
+  const blocks = parseRecommendation(text)
 
   return (
     <div className="space-y-1">
-      {lines.map((line, i) => {
-        const isSectionHeader = /^[A-Z][A-Z\s&]+:/.test(line.trim())
-        const isVerdict = line.trim().startsWith('VERDICT:')
+      {blocks.map((b, i) => {
+        if (b.kind === 'gap') return <div key={i} className="h-1.5" />
 
-        if (isVerdict) {
-          const content = line.replace('VERDICT:', '').trim()
-          const isBuy   = /BUY/i.test(content)
-          const isAvoid = /AVOID/i.test(content)
+        if (b.kind === 'verdict') {
+          const content = b.content
+          const isBuy   = /^BUY\b/i.test(content)
+          const isAvoid = /^AVOID\b/i.test(content)
           const color   = isBuy ? '#30D158' : isAvoid ? '#FF453A' : '#FF9F0A'
           const verdict = isBuy ? 'BUY' : isAvoid ? 'AVOID' : 'HOLD'
+          const tail    = content.replace(/^(BUY|HOLD|AVOID)\s*[—–-]?\s*/i, '')
           return (
-            <div key={i} className="flex items-center gap-3 mb-3 pb-3"
-              style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-              <span className="text-xs font-bold px-3 py-1 rounded-lg"
-                style={{ background: `${color}18`, color, border: `1px solid ${color}44` }}>
+            <div key={i} className="flex items-start gap-3 mb-3 pb-3"
+              style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <span className="text-[11px] font-bold tracking-wider px-2.5 py-1 rounded-md flex-shrink-0 mt-0.5"
+                style={{ background: `${color}1F`, color, border: `1px solid ${color}55`,
+                  boxShadow: `0 0 12px ${color}22` }}>
                 {verdict}
               </span>
-              <span className="text-[13px]" style={{ color: 'rgba(235,235,245,0.7)' }}>
-                {content.replace(/^(BUY|HOLD|AVOID)\s*[—–-]?\s*/i, '')}
-              </span>
-            </div>
-          )
-        }
-
-        if (isSectionHeader) {
-          return (
-            <p key={i} className="text-[11px] font-semibold uppercase tracking-wider pt-2 pb-0.5"
-              style={{ color: 'rgba(235,235,245,0.35)' }}>
-              {line.replace(':', '')}
-            </p>
-          )
-        }
-
-        if (line.trim().startsWith('-')) {
-          return (
-            <div key={i} className="flex gap-2">
-              <span className="text-[11px] mt-0.5 flex-shrink-0" style={{ color: 'rgba(235,235,245,0.2)' }}>–</span>
-              <p className="text-[13px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.65)' }}>
-                {line.replace(/^[-•]\s*/, '')}
+              <p className="text-[13.5px] leading-relaxed" style={{ color: '#F5F5F7' }}>
+                {emphasizeNumber(tail)}
               </p>
             </div>
           )
         }
 
-        if (!line.trim()) return <div key={i} className="h-1" />
+        if (b.kind === 'section') {
+          return (
+            <div key={i} className="flex items-center gap-2 pt-3 pb-1">
+              <span className="w-1 h-3 rounded-full" style={{ background: b.color }} />
+              <span className="text-[10.5px] font-bold uppercase tracking-[0.12em]"
+                style={{ color: b.color }}>
+                {b.label}
+              </span>
+            </div>
+          )
+        }
+
+        if (b.kind === 'bullet') {
+          return (
+            <div key={i} className="flex gap-2.5 pl-0.5">
+              <span className="text-[14px] leading-[1.4] flex-shrink-0 select-none"
+                style={{ color: b.color, opacity: 0.7 }}>•</span>
+              <p className="text-[13px] leading-relaxed flex-1"
+                style={{ color: 'rgba(235,235,245,0.82)' }}>
+                {emphasizeNumber(b.text)}
+              </p>
+            </div>
+          )
+        }
 
         return (
-          <p key={i} className="text-[13px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.65)' }}>
-            {line}
+          <p key={i} className="text-[13px] leading-relaxed"
+            style={{ color: 'rgba(235,235,245,0.82)' }}>
+            {emphasizeNumber(b.text)}
           </p>
         )
       })}
       {streaming && (
         <span className="inline-block w-0.5 h-3.5 animate-pulse align-text-bottom ml-0.5"
-          style={{ background: 'rgba(235,235,245,0.5)' }} />
+          style={{ background: 'rgba(235,235,245,0.6)' }} />
       )}
     </div>
   )
