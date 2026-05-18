@@ -40,10 +40,12 @@ class _RoleScriptedLLM:
 
     planner:      list[LLMTurn] = field(default_factory=list)
     fundamentals: list[LLMTurn] = field(default_factory=list)
+    technical:    list[LLMTurn] = field(default_factory=list)
     synthesis:    list[LLMTurn] = field(default_factory=list)
 
     _p_idx: int = 0
     _f_idx: int = 0
+    _t_idx: int = 0
     _s_idx: int = 0
 
     async def complete(self, *, system, messages, tools, model=None, **_) -> LLMTurn:
@@ -53,6 +55,9 @@ class _RoleScriptedLLM:
         elif "Fundamentals Subagent" in system:
             queue, idx = self.fundamentals, self._f_idx
             self._f_idx += 1
+        elif "Technical Subagent" in system:
+            queue, idx = self.technical, self._t_idx
+            self._t_idx += 1
         elif "DeepValue Synthesizer" in system:
             queue, idx = self.synthesis, self._s_idx
             self._s_idx += 1
@@ -94,11 +99,15 @@ def _tool_turn(calls: list[tuple[str, str, dict[str, Any]]]) -> LLMTurn:
 
 
 def _build_master_registry() -> ToolRegistry:
-    """Master registry exposing the 4 fundamentals tools as stub handlers."""
+    """Master registry exposing the 6 multi-agent tools as stub handlers."""
     reg = ToolRegistry()
 
     class _Args(BaseModel):
         ticker: str
+
+    class _PHArgs(BaseModel):
+        ticker: str
+        period: str = "1y"
 
     async def stub_quote(args: _Args):
         return {"ticker": args.ticker, "name": f"Stub Co ({args.ticker})", "price": 100.0}
@@ -112,10 +121,26 @@ def _build_master_registry() -> ToolRegistry:
     async def stub_moat(args: _Args):
         return {"ticker": args.ticker, "moat_type": "Intangible Assets", "strength": "Wide"}
 
-    reg.register("get_stock_quote",   "d", _Args, stub_quote,     timeout_s=2, max_retries=0)
-    reg.register("get_buffett_score", "d", _Args, stub_score,     timeout_s=2, max_retries=0)
-    reg.register("get_valuation",     "d", _Args, stub_valuation, timeout_s=2, max_retries=0)
-    reg.register("get_moat",          "d", _Args, stub_moat,      timeout_s=2, max_retries=0)
+    async def stub_history(args: _PHArgs):
+        return {
+            "ticker":   args.ticker,
+            "period":   args.period,
+            "summary":  {"total_return_pct": 12.4, "drawdown_from_high_pct": -8.1},
+        }
+
+    async def stub_technicals(args: _Args):
+        return {
+            "ticker": args.ticker,
+            "rsi_14": 58.2, "macd": 1.3, "sma_50": 95.0, "sma_200": 88.0,
+            "price_vs_sma_200_pct": 8.3, "volatility_30d_annualized": 0.24,
+        }
+
+    reg.register("get_stock_quote",   "d", _Args,   stub_quote,      timeout_s=2, max_retries=0)
+    reg.register("get_buffett_score", "d", _Args,   stub_score,      timeout_s=2, max_retries=0)
+    reg.register("get_valuation",     "d", _Args,   stub_valuation,  timeout_s=2, max_retries=0)
+    reg.register("get_moat",          "d", _Args,   stub_moat,       timeout_s=2, max_retries=0)
+    reg.register("get_price_history", "d", _PHArgs, stub_history,    timeout_s=2, max_retries=0)
+    reg.register("get_technicals",    "d", _Args,   stub_technicals, timeout_s=2, max_retries=0)
     return reg
 
 
@@ -148,6 +173,33 @@ def _fundamentals_two_turn_script(ticker: str) -> list[LLMTurn]:
             ("tu4", "get_moat",          {"ticker": ticker}),
         ]),
         _finding_turn(ticker=ticker),
+    ]
+
+
+def _tech_finding_turn(*, ticker: str) -> LLMTurn:
+    payload = {
+        "role":      "technical",
+        "ticker":    ticker,
+        "summary":   f"{ticker} is in an uptrend with neutral-to-firm momentum.",
+        "bullets":   [
+            "RSI 58.2 — neutral, not overbought",
+            "Price 8.3% above SMA-200 — uptrend intact",
+            "Drawdown from 52w high: -8.1%",
+        ],
+        "citations": ["get_stock_quote", "get_price_history", "get_technicals"],
+    }
+    return _final_turn(json.dumps(payload))
+
+
+def _technical_two_turn_script(ticker: str) -> list[LLMTurn]:
+    """Subagent script: turn 1 parallel-calls 3 tools, turn 2 emits Finding JSON."""
+    return [
+        _tool_turn([
+            ("tu1", "get_stock_quote",   {"ticker": ticker}),
+            ("tu2", "get_price_history", {"ticker": ticker, "period": "1y"}),
+            ("tu3", "get_technicals",    {"ticker": ticker}),
+        ]),
+        _tech_finding_turn(ticker=ticker),
     ]
 
 
@@ -322,3 +374,99 @@ def test_registry_subset_unknown_tool_raises():
     master = _build_master_registry()
     with pytest.raises(KeyError):
         master.subset(["get_nonexistent"])
+
+
+# ── technical subagent ────────────────────────────────────────────────────────
+
+
+async def test_orchestrate_technical_only_plan():
+    plan = {
+        "rationale": "Pure momentum question — only technical needed.",
+        "subtasks":  [{"role": "technical", "ticker": "NVDA", "focus": "entry timing"}],
+    }
+    llm = _RoleScriptedLLM(
+        planner=[_planner_turn(plan=plan)],
+        technical=_technical_two_turn_script("NVDA"),
+        synthesis=[_final_turn("## Bottom Line\nHOLD — overbought near term.\n")],
+    )
+    orch = Orchestrator(llm=llm, registry=_build_master_registry())
+    run = await orch.run("When should I buy NVDA?")
+
+    assert run.status == AgentRunStatus.COMPLETED
+    assert run.plan is not None and run.plan.subtasks[0].role == SubagentRole.TECHNICAL
+    assert len(run.findings) == 1
+    assert run.findings[0].role == SubagentRole.TECHNICAL
+    assert "RSI" in " ".join(run.findings[0].bullets)
+
+
+async def test_orchestrate_fundamentals_plus_technical_parallel():
+    """Plan contains both roles for the same ticker — they run in parallel,
+    both findings reach the synthesizer."""
+    plan = {
+        "rationale": "Quality + entry-timing question.",
+        "subtasks":  [
+            {"role": "fundamentals", "ticker": "AAPL"},
+            {"role": "technical",    "ticker": "AAPL"},
+        ],
+    }
+    llm = _RoleScriptedLLM(
+        planner=[_planner_turn(plan=plan)],
+        fundamentals=_fundamentals_two_turn_script("AAPL"),
+        technical=_technical_two_turn_script("AAPL"),
+        synthesis=[_final_turn(
+            "## Bottom Line\nBUY — wide moat, momentum intact, no overbought signal.\n"
+        )],
+    )
+    orch = Orchestrator(llm=llm, registry=_build_master_registry())
+    run = await orch.run("Should I buy AAPL and when?")
+
+    assert run.status == AgentRunStatus.COMPLETED
+    assert len(run.findings) == 2
+    roles = {f.role for f in run.findings}
+    assert roles == {SubagentRole.FUNDAMENTALS, SubagentRole.TECHNICAL}
+    # Both subagent_runs recorded
+    assert len(run.subagent_runs) == 2
+    # Coordination trail: PLAN + 2 SUBAGENT + SYNTH + FINAL = 5
+    kinds = [s.kind for s in run.steps]
+    assert kinds == [
+        OrchestratorStepKind.PLAN,
+        OrchestratorStepKind.SUBAGENT,
+        OrchestratorStepKind.SUBAGENT,
+        OrchestratorStepKind.SYNTH,
+        OrchestratorStepKind.FINAL,
+    ]
+
+
+async def test_orchestrate_partial_failure_continues_to_synth():
+    """Fundamentals succeeds, technical fails → synth still runs with one finding."""
+    plan = {
+        "rationale": "Both lenses on AAPL.",
+        "subtasks":  [
+            {"role": "fundamentals", "ticker": "AAPL"},
+            {"role": "technical",    "ticker": "AAPL"},
+        ],
+    }
+    bad = _final_turn("not a finding")
+    llm = _RoleScriptedLLM(
+        planner=[_planner_turn(plan=plan)],
+        fundamentals=_fundamentals_two_turn_script("AAPL"),
+        # Technical: makes a tool call, then 4 garbage replies (exceeds default
+        # max_repairs=2 → subagent reports FAILED), orchestrator continues.
+        technical=[
+            _tool_turn([("tu1", "get_technicals", {"ticker": "AAPL"})]),
+            bad, bad, bad, bad,
+        ],
+        synthesis=[_final_turn("## Bottom Line\nBUY on fundamentals.\n")],
+    )
+    orch = Orchestrator(llm=llm, registry=_build_master_registry())
+    run = await orch.run("AAPL?")
+
+    assert run.status == AgentRunStatus.COMPLETED
+    assert len(run.findings) == 1
+    assert run.findings[0].role == SubagentRole.FUNDAMENTALS
+    # The failed technical step is recorded with an error and no finding.
+    sub_steps = [s for s in run.steps if s.kind == OrchestratorStepKind.SUBAGENT]
+    failed = [s for s in sub_steps if s.finding is None]
+    assert len(failed) == 1
+    assert failed[0].role == SubagentRole.TECHNICAL
+    assert failed[0].error

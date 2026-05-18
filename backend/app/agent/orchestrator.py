@@ -38,7 +38,7 @@ from app.agent.models import (
 )
 from app.agent.prompts import PLANNER_SYSTEM, SYNTHESIS_SYSTEM
 from app.agent.runner import AgentRunner
-from app.agent.subagents import fundamentals_runner
+from app.agent.subagents import fundamentals_runner, technical_runner
 from app.agent.tools.dispatcher import ToolDispatcher
 from app.agent.tools.registry import ToolRegistry
 
@@ -228,6 +228,12 @@ class Orchestrator:
     def _subagent_runner_for(self, subtask: Subtask) -> AgentRunner:
         if subtask.role == SubagentRole.FUNDAMENTALS:
             return fundamentals_runner(
+                llm=self._llm,
+                registry=self._registry,
+                max_iters=self._subagent_iters,
+            )
+        if subtask.role == SubagentRole.TECHNICAL:
+            return technical_runner(
                 llm=self._llm,
                 registry=self._registry,
                 max_iters=self._subagent_iters,

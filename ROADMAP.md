@@ -237,7 +237,7 @@
 - 100% of agent runs traceable end-to-end (every step recorded)
 - Resumable: any agent run can be interrupted and resumed from checkpoint
 
-**Status (2026-05-17):** Phase 7.2 MVP shipped — multi-agent pipeline live. `Orchestrator` class drives Planner → N specialist subagents (parallel) → Synthesizer. Planner emits a structured `ResearchPlan` (Pydantic) from the user query; Fundamentals subagent (4-tool subset: quote/score/valuation/moat) runs per subtask and returns a structured `Finding`; Synthesizer turns findings into the section-formatted report. Per-subagent registries via `ToolRegistry.subset(names)`. Cost / tokens roll up across plan + subagent + synth into `OrchestratorRun.total_*`. New endpoints `POST /api/agent/orchestrate` and `/orchestrate/stream` (SSE) exposed. 9 new tests in `tests/agent/test_orchestrator.py` covering happy path, planner repair, planner exhaustion, subagent failure, unsupported role, cost rollup, and `subset()` semantics — full suite 84/84 green. Reserved roles (`news`, `technical`, `valuation`, `risk`) intentionally raise at dispatch so the planner schema stays stable. Previous: Phase 7.1 SSE streaming, 6 tools, structured-output enforcement, live trace UI, prompt caching. Next: News / Technical / Risk subagents, reflexion pass, Postgres persistence.
+**Status (2026-05-17):** Phase 7.2 expanded — Technical subagent now shipping alongside Fundamentals. Planner can dispatch both roles per ticker for "should I buy + when" style questions. `app/agent/subagents/technical.py` mirrors the Fundamentals pattern (3-tool subset: quote / price_history / technicals; `output_schema=Finding`). 3 new tests added (technical-only plan, parallel fundamentals+technical, partial-failure continuation) — full suite **87/87 green**. Frontend (Phase 7.6) already renders any role's Finding card with a coloured role chip, so the new role appears immediately without UI changes. Reserved roles (`news`, `valuation`, `risk`) still raise at dispatch. Previous: Phase 7.1 SSE streaming, 6 tools, structured-output enforcement, live trace UI, prompt caching. Previous-prior: Phase 7.2 MVP (Orchestrator + Fundamentals) and Phase 7.6 multi-agent UI shipped in commits `2896c59` / `8a600b3`. Next: News subagent (needs API key), get_peer_comparison + Valuation subagent, Reflexion pass, Postgres persistence.
 
 ### 7.1 Agent Harness (self-authored, no LangGraph)
 
@@ -258,7 +258,7 @@
 - [x] **Orchestrator Agent** — decomposes user query into a `ResearchPlan` (Pydantic), routes subtasks to specialists. Implemented in `app/agent/orchestrator.py`: Planner agent (no tools, structured output) → N subagent runners in parallel → Synthesizer agent (no tools, free-form). Plan / subagent / synth events emitted as `OrchestratorStep` for SSE.
 - [x] **Fundamentals Subagent** — owns Buffett ratios, DCF, EPV, ROIC, Graham Number; uses existing `buffett.py` / `valuation.py` via the agent toolset. `app/agent/subagents/fundamentals.py` returns a structured `Finding` (output_schema). Tool subset: `get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`.
 - [ ] **News & Sentiment Subagent** — fetches news (NewsAPI / Tavily / Perplexity), classifies sentiment, dedupes by event
-- [ ] **Technical Subagent** — RSI, MACD, MA50/MA200, volume profile, support/resistance
+- [x] **Technical Subagent** — RSI / MACD / SMA-50 / SMA-200 / drawdown via the existing `get_technicals` + `get_price_history` tools. `app/agent/subagents/technical.py`; returns a structured `Finding` with momentum + entry-timing read. Planner now dispatches `technical` alongside `fundamentals` for timing-flavored questions. Volume profile / support-resistance deferred (not in current tool output).
 - [ ] **Valuation Subagent** — peer comparison, EV/EBITDA vs sector median, reverse-DCF implied growth
 - [ ] **Risk Subagent** — debt maturity wall, customer concentration, regulatory exposure (pulled from 10-K Item 1A)
 - [x] **Inter-agent messaging** — subagents return structured `Finding` objects; orchestrator collects them and serializes as JSON into the synthesizer's user message. Failed subagents land as SUBAGENT steps with `finding=None` and the run continues if any finding made it.
@@ -466,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-17 · v0.6-beta (Phase 7.2 MVP + Phase 7.6 multi-agent UI — single/multi toggle, plan + finding + synthesis cards, citation chips)*
+*Last updated: 2026-05-17 · v0.6.1-beta (Phase 7.2 — Technical subagent shipped; planner dispatches fundamentals + technical in parallel)*

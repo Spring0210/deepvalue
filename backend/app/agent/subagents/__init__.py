@@ -12,5 +12,12 @@ from app.agent.subagents.fundamentals import (
     FUNDAMENTALS_TOOLS,
     fundamentals_runner,
 )
+from app.agent.subagents.technical import (
+    TECHNICAL_TOOLS,
+    technical_runner,
+)
 
-__all__ = ["FUNDAMENTALS_TOOLS", "fundamentals_runner"]
+__all__ = [
+    "FUNDAMENTALS_TOOLS", "fundamentals_runner",
+    "TECHNICAL_TOOLS",    "technical_runner",
+]
