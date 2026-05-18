@@ -237,7 +237,7 @@
 - 100% of agent runs traceable end-to-end (every step recorded)
 - Resumable: any agent run can be interrupted and resumed from checkpoint
 
-**Status (2026-05-15):** Phase 7.1 MVP shipped in commit `09e1952` — single-agent plan-act-observe loop running against Anthropic Claude, 2 tools wired. **Update:** SSE streaming live (`POST /api/agent/stream`) and tool library expanded to 6 tools (`get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`, `get_price_history`, `get_technicals`). Orchestrator prompt updated so the agent reaches for valuation / moat / momentum at the right moments. Structured-output enforcement (parse + auto-repair loop) added. Live trace UI shipped (`Agent` sidebar section, SSE-driven). Prompt caching shipped — `system` + tail-of-tools marked with `cache_control: ephemeral` so repeat-ticker runs reuse the static prefix; `LLMUsage` already prices cache reads/writes. Next: Postgres persistence, multi-agent orchestration.
+**Status (2026-05-17):** Phase 7.2 MVP shipped — multi-agent pipeline live. `Orchestrator` class drives Planner → N specialist subagents (parallel) → Synthesizer. Planner emits a structured `ResearchPlan` (Pydantic) from the user query; Fundamentals subagent (4-tool subset: quote/score/valuation/moat) runs per subtask and returns a structured `Finding`; Synthesizer turns findings into the section-formatted report. Per-subagent registries via `ToolRegistry.subset(names)`. Cost / tokens roll up across plan + subagent + synth into `OrchestratorRun.total_*`. New endpoints `POST /api/agent/orchestrate` and `/orchestrate/stream` (SSE) exposed. 9 new tests in `tests/agent/test_orchestrator.py` covering happy path, planner repair, planner exhaustion, subagent failure, unsupported role, cost rollup, and `subset()` semantics — full suite 84/84 green. Reserved roles (`news`, `technical`, `valuation`, `risk`) intentionally raise at dispatch so the planner schema stays stable. Previous: Phase 7.1 SSE streaming, 6 tools, structured-output enforcement, live trace UI, prompt caching. Next: News / Technical / Risk subagents, reflexion pass, Postgres persistence.
 
 ### 7.1 Agent Harness (self-authored, no LangGraph)
 
@@ -255,13 +255,13 @@
 
 ### 7.2 Multi-Agent Orchestration
 
-- [ ] **Orchestrator Agent** — decomposes user query into a `ResearchPlan` (Pydantic), routes subtasks to specialists
-- [ ] **Fundamentals Subagent** — owns Buffett ratios, DCF, EPV, ROIC, Graham Number; uses existing `buffett.py` / `valuation.py` as tools
+- [x] **Orchestrator Agent** — decomposes user query into a `ResearchPlan` (Pydantic), routes subtasks to specialists. Implemented in `app/agent/orchestrator.py`: Planner agent (no tools, structured output) → N subagent runners in parallel → Synthesizer agent (no tools, free-form). Plan / subagent / synth events emitted as `OrchestratorStep` for SSE.
+- [x] **Fundamentals Subagent** — owns Buffett ratios, DCF, EPV, ROIC, Graham Number; uses existing `buffett.py` / `valuation.py` via the agent toolset. `app/agent/subagents/fundamentals.py` returns a structured `Finding` (output_schema). Tool subset: `get_stock_quote`, `get_buffett_score`, `get_valuation`, `get_moat`.
 - [ ] **News & Sentiment Subagent** — fetches news (NewsAPI / Tavily / Perplexity), classifies sentiment, dedupes by event
 - [ ] **Technical Subagent** — RSI, MACD, MA50/MA200, volume profile, support/resistance
 - [ ] **Valuation Subagent** — peer comparison, EV/EBITDA vs sector median, reverse-DCF implied growth
 - [ ] **Risk Subagent** — debt maturity wall, customer concentration, regulatory exposure (pulled from 10-K Item 1A)
-- [ ] **Inter-agent messaging** — subagents return structured `Finding` objects; orchestrator dedupes contradictions and synthesizes
+- [x] **Inter-agent messaging** — subagents return structured `Finding` objects; orchestrator collects them and serializes as JSON into the synthesizer's user message. Failed subagents land as SUBAGENT steps with `finding=None` and the run continues if any finding made it.
 - [ ] **Reflexion pass** — final agent reviews its own report against the original query, flags gaps, can dispatch follow-up subagent runs
 
 ### 7.3 Tool Library (called by all subagents)
@@ -466,4 +466,4 @@
 
 ---
 
-*Last updated: 2026-05-15 · v0.5-beta (Phase 7.1 complete sans persistence — SSE streaming + 6 tools + structured-output enforcement + prompt caching)*
+*Last updated: 2026-05-17 · v0.6-alpha (Phase 7.2 MVP — Orchestrator + Fundamentals subagent + structured Finding contract + 2 new endpoints)*

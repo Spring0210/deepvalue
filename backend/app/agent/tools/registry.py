@@ -74,6 +74,23 @@ class ToolRegistry:
         spec = self.get(name)
         return spec.args_model.model_validate(raw)
 
+    def subset(self, names: list[str]) -> "ToolRegistry":
+        """Return a new registry that exposes only the named tools. Used by
+        subagents so each specialist sees a narrow, role-appropriate toolset
+        while sharing handlers with the orchestrator's full registry."""
+        sub = ToolRegistry()
+        for name in names:
+            spec = self.get(name)
+            sub.register(
+                name=spec.name,
+                description=spec.description,
+                args_model=spec.args_model,
+                handler=spec.handler,
+                timeout_s=spec.timeout_s,
+                max_retries=spec.max_retries,
+            )
+        return sub
+
 
 def _strip_pydantic_extras(schema: dict[str, Any]) -> dict[str, Any]:
     """Anthropic accepts standard JSON Schema; drop Pydantic-specific keys it ignores."""
