@@ -60,11 +60,15 @@ export interface StockQuote {
 export interface StockValuation {
   graham: number | null
   dcf_base: number | null
+  dcf_bear: number | null
+  dcf_bull: number | null
   fcf_yield_value: number | null
   epv: number | null
   current_price: number | null
+  discount_rate: number | null
   mos_graham: number | null
   mos_dcf: number | null
+  mos_dcf_bear: number | null
   mos_fcf_yield: number | null
   mos_epv: number | null
   roic: number | null
@@ -80,6 +84,8 @@ export interface StockValuation {
     fcf: number | null
     shares: number | null
     default_growth: number | null
+    beta: number | null
+    discount_rate: number | null
   }
 }
 

@@ -166,9 +166,10 @@ export default function ValuationPanel() {
   const { valuation, quote } = useStock()
   const sym = getCurrencySymbol(quote?.currency)
 
-  const defaultGrowth = valuation?.inputs.default_growth ?? 0.10
+  const defaultGrowth   = valuation?.inputs.default_growth ?? 0.10
+  const capmDiscount    = valuation?.inputs.discount_rate ?? 0.10
   const [growth,        setGrowth]        = useState(defaultGrowth)
-  const [discount,      setDiscount]      = useState(0.10)
+  const [discount,      setDiscount]      = useState(capmDiscount)
   const [terminal,      setTerminal]      = useState(0.03)
   const [requiredYield, setRequiredYield] = useState(0.07)
 
@@ -299,10 +300,32 @@ export default function ValuationPanel() {
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
             <PriceBar price={price} iv={dcfLive} label="DCF Intrinsic Value vs Market Price" color="#5AC8F5" sym={sym} />
+
+            {/* Bear / Base / Bull range from the backend (CAPM discount) */}
+            {valuation.dcf_base != null && (
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'Bear', value: valuation.dcf_bear, color: '#FF453A' },
+                  { label: 'Base', value: valuation.dcf_base, color: '#5AC8F5' },
+                  { label: 'Bull', value: valuation.dcf_bull, color: '#30D158' },
+                ].map(s => (
+                  <div key={s.label} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(235,235,245,0.28)' }}>{s.label}</p>
+                    <p className="text-sm font-semibold font-mono" style={{ color: s.color }}>
+                      {s.value != null ? `${sym}${s.value.toFixed(2)}` : '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
               <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.25)' }}>Assumptions</p>
               <SliderRow label="FCF Growth Rate (yrs 1–10)" value={growth}   min={0}    max={0.40} step={0.005} format={pctFmt} onChange={setGrowth} />
-              <SliderRow label="Discount Rate (WACC)"       value={discount} min={0.05} max={0.20} step={0.005} format={pctFmt} onChange={setDiscount} />
+              <SliderRow
+                label={`Discount Rate (CAPM${valuation.inputs.beta != null ? `, β ${valuation.inputs.beta.toFixed(2)}` : ''})`}
+                value={discount} min={0.05} max={0.20} step={0.005} format={pctFmt} onChange={setDiscount}
+              />
               <SliderRow label="Terminal Growth Rate"        value={terminal} min={0.01} max={0.05} step={0.005} format={pctFmt} onChange={setTerminal} />
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -322,8 +345,9 @@ export default function ValuationPanel() {
               ))}
             </div>
             <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.25)' }}>
-              10-year FCF projection discounted at WACC, plus Gordon Growth terminal value.
-              Default growth rate derived from revenue growth (capped 3–25%). Adjust sliders for bull/bear scenarios.
+              10-year FCF projection discounted at the cost of equity, plus Gordon Growth terminal value.
+              Discount rate defaults to CAPM (risk-free + β × equity premium); growth derived from revenue
+              growth (capped 3–25%). Bear/Base/Bull above flex growth ±4% and discount ±2%.
             </p>
           </div>
         ) : (
