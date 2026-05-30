@@ -41,11 +41,12 @@ function ScoreGauge({ score }: { score: number }) {
 
 // ── Weight Bar ─────────────────────────────────────────────────────────────
 function WeightBreakdown({ ratios }: { ratios: ReturnType<typeof useStock>['ratios'] }) {
-  const categories = ['Income Statement', 'Balance Sheet', 'Cash Flow'] as const
+  const categories = ['Income Statement', 'Returns on Capital', 'Balance Sheet', 'Cash Flow'] as const
   const catColors: Record<string, string> = {
-    'Income Statement': '#5AC8F5',
-    'Balance Sheet':    '#BF5AF2',
-    'Cash Flow':        '#FF9F0A',
+    'Income Statement':   '#5AC8F5',
+    'Returns on Capital': '#30D158',
+    'Balance Sheet':      '#BF5AF2',
+    'Cash Flow':          '#FF9F0A',
   }
 
   return (

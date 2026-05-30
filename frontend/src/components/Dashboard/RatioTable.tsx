@@ -64,9 +64,10 @@ function fmt(value: number | null, name: string, sym: string): string {
 
 // ── Category config ───────────────────────────────────────────────────────────
 const CATEGORY_META: Record<string, { color: string; label: string }> = {
-  'Income Statement': { color: '#5AC8F5', label: 'Income Statement' },
-  'Balance Sheet':    { color: '#BF5AF2', label: 'Balance Sheet' },
-  'Cash Flow':        { color: '#FF9F0A', label: 'Cash Flow' },
+  'Income Statement':   { color: '#5AC8F5', label: 'Income Statement' },
+  'Returns on Capital': { color: '#30D158', label: 'Returns on Capital' },
+  'Balance Sheet':      { color: '#BF5AF2', label: 'Balance Sheet' },
+  'Cash Flow':          { color: '#FF9F0A', label: 'Cash Flow' },
 }
 
 // ── Ratio Card ────────────────────────────────────────────────────────────────
@@ -158,7 +159,7 @@ function CategorySection({ category, ratios }: { category: string; ratios: Buffe
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-const CATEGORY_ORDER = ['Income Statement', 'Balance Sheet', 'Cash Flow']
+const CATEGORY_ORDER = ['Income Statement', 'Returns on Capital', 'Balance Sheet', 'Cash Flow']
 
 export default function RatioTable({ ratios }: { ratios: BuffettRatio[] }) {
   const { weightedScore } = useStock()
