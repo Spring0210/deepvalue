@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.valuation import compute_roic
+
 
 @dataclass
 class BuffettRatio:
@@ -99,7 +101,7 @@ def _graded(
 _RAMP_METRICS = {
     "Gross Margin", "SG&A Margin", "R&D Margin", "Depreciation Margin",
     "Interest Expense Margin", "Net Profit Margin", "Adj. Debt-to-Equity",
-    "CapEx Margin",
+    "CapEx Margin", "ROIC", "ROE",
 }
 
 
@@ -231,7 +233,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Gross Profit / Total Revenue",
         description="Measures how much revenue remains after direct production costs.",
         buffett_logic="Signals a durable competitive advantage — the company isn't competing on price.",
-        category="Income Statement", weight=0.13,
+        category="Income Statement", weight=0.10,
     ))
 
     # 2. SG&A Margin
@@ -245,7 +247,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="SG&A Expense / Gross Profit",
         description="Selling, General & Administrative expenses as a share of gross profit.",
         buffett_logic="Wide-moat companies don't need heavy overhead spending to operate.",
-        category="Income Statement", weight=0.07,
+        category="Income Statement", weight=0.05,
     ))
 
     # 3. R&D Margin
@@ -272,7 +274,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Reconciled Depreciation / Gross Profit",
         description="Depreciation & amortization as a share of gross profit.",
         buffett_logic="Great businesses don't need heavy depreciating assets to maintain their competitive edge.",
-        category="Income Statement", weight=0.06,
+        category="Income Statement", weight=0.04,
     ))
 
     # 5. Interest Expense Margin
@@ -295,7 +297,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Interest Expense / Operating Income",
         description="How much of operating income is consumed by interest payments.",
         buffett_logic="Great businesses self-finance with earnings — they don't need much debt.",
-        category="Income Statement", weight=0.08,
+        category="Income Statement", weight=0.06,
     ))
 
     # 6. Effective Tax Rate (no sector adjustment)
@@ -308,7 +310,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Tax Provision / Pre-Tax Income",
         description="The actual tax rate paid on pre-tax income.",
         buffett_logic="Highly profitable companies pay full taxes — they can't shelter extraordinary income.",
-        category="Income Statement", weight=0.05,
+        category="Income Statement", weight=0.02,
     ))
 
     # 7. Net Profit Margin
@@ -322,7 +324,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Net Income / Total Revenue",
         description="Percentage of revenue that becomes net profit.",
         buffett_logic="Great companies consistently convert a high percentage of revenue into net profit.",
-        category="Income Statement", weight=0.11,
+        category="Income Statement", weight=0.09,
     ))
 
     # 8. EPS Growth (YoY) — no sector adjustment
@@ -338,12 +340,56 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="EPS (Year N) / EPS (Year N−1)",
         description="Year-over-year growth ratio of basic earnings per share.",
         buffett_logic="Great companies grow earnings per share every year without fail.",
-        category="Income Statement", weight=0.10,
+        category="Income Statement", weight=0.08,
+    ))
+
+    # ── Returns on Capital ────────────────────────────────────────────────────
+    # Munger: ROIC is the single most important metric; Buffett leans on ROE.
+    # Both are computed from the statements so compute_ratios stays (data, sector).
+
+    bs_equity = _book_equity(bal)
+
+    # 9. ROIC (return on invested capital)
+    tax_prov = _latest(fin, "Tax Provision")
+    pretax   = _latest(fin, "Pretax Income")
+    tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
+    roic = compute_roic(
+        op_income, tax_rate, _latest(bal, "Total Debt"), bs_equity,
+        _latest(bal, "Cash And Cash Equivalents"),
+    )
+    ratios.append(BuffettRatio(
+        name="ROIC", value=roic, threshold="≥ 12%",
+        passes=(roic >= 0.12) if roic is not None else None,
+        score=_ramp_high(roic, 0.12, 0.06),
+        equation="NOPAT / (Total Debt + Equity − Cash)",
+        description="After-tax operating return on the capital the business employs.",
+        buffett_logic="Munger's key test: durable businesses compound capital at high ROIC.",
+        category="Returns on Capital", weight=0.12,
+    ))
+
+    # 10. ROE (return on equity)
+    net_income_re = _latest(fin, "Net Income")
+    roe: Optional[float] = None
+    roe_pass: Optional[bool] = None
+    if net_income_re is not None and bs_equity is not None:
+        if bs_equity > 0:
+            roe = net_income_re / bs_equity
+            roe_pass = roe >= 0.15
+        else:
+            roe_pass = False   # negative book equity is a red flag, not a high ROE
+    ratios.append(BuffettRatio(
+        name="ROE", value=roe, threshold="≥ 15%",
+        passes=roe_pass,
+        score=_graded(roe, "high", 0.15, 0.075, roe_pass),
+        equation="Net Income / Total Equity",
+        description="Net profit generated on shareholders' equity.",
+        buffett_logic="Buffett favours businesses that earn consistently high returns on equity.",
+        category="Returns on Capital", weight=0.10,
     ))
 
     # ── Balance Sheet ─────────────────────────────────────────────────────────
 
-    # 9. Cash vs Current Debt (no sector adjustment)
+    # 11. Cash vs Current Debt (no sector adjustment)
     cash         = _latest(bal, "Cash And Cash Equivalents")
     current_debt = _latest(bal, "Current Debt")
     cvd = _div(cash, current_debt)
@@ -353,10 +399,10 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Cash & Equivalents / Current Debt",
         description="Whether the company holds more cash than its near-term debt obligations.",
         buffett_logic="Great companies generate so much cash they hold more than their near-term debt.",
-        category="Balance Sheet", weight=0.08,
+        category="Balance Sheet", weight=0.06,
     ))
 
-    # 10. Adjusted Debt-to-Equity
+    # 12. Adjusted Debt-to-Equity
     total_debt = _latest(bal, "Total Debt")
     equity     = _book_equity(bal)
     dte_thresh, dte_limit = _sector_threshold(sector, "Adj. Debt-to-Equity")
@@ -381,7 +427,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         category="Balance Sheet", weight=0.09,
     ))
 
-    # 11. Preferred Stock (no sector adjustment)
+    # 13. Preferred Stock (no sector adjustment)
     preferred = _latest(bal, "Preferred Stock")
     ratios.append(BuffettRatio(
         name="Preferred Stock", value=preferred, threshold="None (= $0)",
@@ -392,7 +438,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         category="Balance Sheet", weight=0.01,
     ))
 
-    # 12. Retained Earnings Growth (no sector adjustment)
+    # 14. Retained Earnings Growth (no sector adjustment)
     re_0 = _nth(bal, "Retained Earnings", 0)
     re_1 = _nth(bal, "Retained Earnings", 1)
     re_growth = _div(re_0, re_1) if (re_0 is not None and re_1 is not None) else None
@@ -405,10 +451,10 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="Retained Earnings (Year N) / Retained Earnings (Year N−1)",
         description="Whether retained earnings are growing year-over-year.",
         buffett_logic="Great companies grow retained earnings each year, compounding shareholder wealth.",
-        category="Balance Sheet", weight=0.09,
+        category="Balance Sheet", weight=0.07,
     ))
 
-    # 13. Treasury Stock (no sector adjustment)
+    # 15. Treasury Stock (no sector adjustment)
     treasury = _latest(bal, "Treasury Stock")
     ratios.append(BuffettRatio(
         name="Treasury Stock", value=treasury, threshold="Exists (non-zero)",
@@ -421,7 +467,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
 
     # ── Cash Flow ─────────────────────────────────────────────────────────────
 
-    # 14. CapEx Margin
+    # 16. CapEx Margin
     capex         = _latest(cf, "Capital Expenditure")
     net_income_cf = _latest(cf, "Net Income From Continuing Operations")
     if capex is not None:
@@ -435,7 +481,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         equation="CapEx / Net Income From Continuing Operations",
         description="Capital expenditure as a percentage of net income.",
         buffett_logic="Great companies don't need heavy equipment investment to sustain their profits.",
-        category="Cash Flow", weight=0.08,
+        category="Cash Flow", weight=0.06,
     ))
 
     # Non-ramp metrics (bands, existence checks, hard gates) score 1/0 from pass.

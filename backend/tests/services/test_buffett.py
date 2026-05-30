@@ -155,3 +155,54 @@ def test_weighted_score_uses_continuous_score():
 
 def test_weighted_score_ignores_na_metrics():
     assert compute_weighted_score([_stub(None, 0.5), _stub(1.0, 0.5)]) == 100.0
+
+
+# ── B2: ROIC and ROE on the scorecard ─────────────────────────────────────────
+
+def test_roic_metric_present_and_graded():
+    # NOPAT = 100 × (1 − 0.21) = 79; IC = debt 100 + equity 400 − cash 0 = 500.
+    # ROIC = 79 / 500 = 0.158 → above the 12% knee → full credit, passes.
+    data = _data(
+        fin=_one_year({
+            "Operating Income": 100.0, "Tax Provision": 21.0,
+            "Pretax Income": 100.0, "Net Income": 79.0,
+        }),
+        bal=_one_year({
+            "Total Debt": 100.0, "Common Stock Equity": 400.0,
+            "Cash And Cash Equivalents": 0.0,
+        }),
+    )
+    r = _by_name(compute_ratios(data), "ROIC")
+    assert r.value is not None and abs(r.value - 0.158) < 0.002
+    assert r.passes is True and r.score == 1.0
+
+
+def test_roe_metric_present():
+    data = _data(
+        fin=_one_year({"Net Income": 80.0}),
+        bal=_one_year({"Common Stock Equity": 400.0}),
+    )
+    r = _by_name(compute_ratios(data), "ROE")
+    assert r.value is not None and abs(r.value - 0.20) < 1e-6
+    assert r.passes is True
+
+
+def test_roe_fails_on_negative_equity():
+    data = _data(
+        fin=_one_year({"Net Income": 80.0}),
+        bal=_one_year({"Common Stock Equity": -50.0}),
+    )
+    r = _by_name(compute_ratios(data), "ROE")
+    assert r.passes is False
+
+
+def test_roe_na_when_equity_missing():
+    data = _data(fin=_one_year({"Net Income": 80.0}))
+    r = _by_name(compute_ratios(data), "ROE")
+    assert r.value is None and r.passes is None and r.score is None
+
+
+def test_scorecard_has_sixteen_metrics_and_weights_sum_to_one():
+    ratios = compute_ratios(_data())
+    assert len(ratios) == 16
+    assert abs(sum(r.weight for r in ratios) - 1.0) < 0.001
