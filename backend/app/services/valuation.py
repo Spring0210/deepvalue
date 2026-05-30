@@ -11,6 +11,22 @@ def _latest(statement: dict, field: str) -> Optional[float]:
     return statement[col].get(field)
 
 
+# yfinance labels equity differently across tickers; try the common fields in order.
+_EQUITY_FIELDS = (
+    "Stockholders Equity",
+    "Common Stock Equity",
+    "Total Equity Gross Minority Interest",
+)
+
+
+def _book_equity(bal: dict) -> Optional[float]:
+    for field in _EQUITY_FIELDS:
+        v = _latest(bal, field)
+        if v is not None:
+            return v
+    return None
+
+
 # ── Valuation models ──────────────────────────────────────────────────────────
 
 def graham_number(eps: Optional[float], bvps: Optional[float]) -> Optional[float]:
@@ -88,23 +104,26 @@ def compute_roic(
     op_income: Optional[float],
     tax_rate: Optional[float],
     total_debt: Optional[float],
-    total_assets: Optional[float],
+    total_equity: Optional[float],
     cash: Optional[float],
 ) -> Optional[float]:
     """
-    ROIC = NOPAT / Invested Capital.
+    ROIC = NOPAT / Invested Capital (financing approach).
     NOPAT = Operating Income × (1 − tax_rate).
-    Invested Capital = Total Assets − Total Debt + Total Debt − Cash = Equity + Debt − Cash.
+    Invested Capital = Total Debt + Total Equity − excess Cash.
+
+    Uses real book equity, not an `assets − debt` proxy: that proxy folds every
+    non-debt liability (payables, deferred revenue, pensions) into "capital" and
+    badly understates ROIC for working-capital-heavy firms.
     """
     if not op_income or op_income <= 0:
+        return None
+    if total_equity is None:
         return None
     t = tax_rate if (tax_rate is not None and 0 < tax_rate < 1) else 0.21
     nopat = op_income * (1 - t)
 
-    if total_debt is None or total_assets is None:
-        return None
-    equity = total_assets - total_debt
-    invested_capital = equity + total_debt - (cash or 0)
+    invested_capital = (total_debt or 0) + total_equity - (cash or 0)
     if invested_capital <= 0:
         return None
     return round(nopat / invested_capital, 4)
@@ -168,14 +187,14 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         tax_prov     = _latest(fin, "Tax Provision")
         pretax       = _latest(fin, "Pretax Income")
         total_debt   = _latest(bal, "Total Debt")
-        total_assets = _latest(bal, "Total Assets")
+        total_equity = _book_equity(bal)
         cash         = _latest(bal, "Cash And Cash Equivalents")
 
         tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
         nopat = (op_income * (1 - (tax_rate or 0.21))) if (op_income and op_income > 0) else None
 
         epv  = earnings_power_value(nopat, shares, discount_rate=0.10)
-        roic = compute_roic(op_income, tax_rate, total_debt, total_assets, cash)
+        roic = compute_roic(op_income, tax_rate, total_debt, total_equity, cash)
 
     coc = circle_of_competence_check(quote)
 

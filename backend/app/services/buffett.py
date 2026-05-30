@@ -35,6 +35,22 @@ def _nth(statement: dict, field: str, n: int) -> Optional[float]:
     return statement[cols[n]].get(field)
 
 
+# yfinance labels equity differently across tickers; try the common fields in order.
+_EQUITY_FIELDS = (
+    "Stockholders Equity",
+    "Common Stock Equity",
+    "Total Equity Gross Minority Interest",
+)
+
+
+def _book_equity(bal: dict) -> Optional[float]:
+    for field in _EQUITY_FIELDS:
+        v = _latest(bal, field)
+        if v is not None:
+            return v
+    return None
+
+
 def _sector_threshold(sector: str, metric: str) -> tuple[str, float]:
     """Return (threshold_label, numeric_limit) adjusted for sector norms."""
     s = sector.lower()
@@ -204,13 +220,20 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
 
     # 5. Interest Expense Margin
     interest = _latest(fin, "Interest Expense")
-    intm = _div(interest, op_income)
-    if intm is not None:
-        intm = abs(intm)
     int_thresh, int_limit = _sector_threshold(sector, "Interest Expense Margin")
+    # An operating loss can't cover any interest. abs() used to mask this: a
+    # negative/negative ratio looked like a small "passing" burden.
+    intm: Optional[float] = None
+    intm_pass: Optional[bool] = None
+    if interest is not None and op_income is not None:
+        if op_income > 0:
+            intm = abs(interest) / op_income
+            intm_pass = intm <= int_limit
+        else:
+            intm_pass = False
     ratios.append(BuffettRatio(
         name="Interest Expense Margin", value=intm, threshold=int_thresh,
-        passes=(intm <= int_limit) if intm is not None else None,
+        passes=intm_pass,
         equation="Interest Expense / Operating Income",
         description="How much of operating income is consumed by interest payments.",
         buffett_logic="Great businesses self-finance with earnings — they don't need much debt.",
@@ -247,9 +270,12 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     eps_0      = _nth(fin, "Basic EPS", 0)
     eps_1      = _nth(fin, "Basic EPS", 1)
     eps_growth = _div(eps_0, eps_1)
+    # Judge on the signed values, not the raw ratio: two negative years give a
+    # ratio > 1.0 when the loss *deepens*, which used to read as a false pass.
+    eps_pass = (eps_0 > eps_1 and eps_0 > 0) if (eps_0 is not None and eps_1 is not None) else None
     ratios.append(BuffettRatio(
         name="EPS Growth (YoY)", value=eps_growth, threshold="> 1.0 (positive & growing)",
-        passes=(eps_growth > 1.0) if eps_growth is not None else None,
+        passes=eps_pass,
         equation="EPS (Year N) / EPS (Year N−1)",
         description="Year-over-year growth ratio of basic earnings per share.",
         buffett_logic="Great companies grow earnings per share every year without fail.",
@@ -272,16 +298,25 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ))
 
     # 10. Adjusted Debt-to-Equity
-    total_debt   = _latest(bal, "Total Debt")
-    total_assets = _latest(bal, "Total Assets")
-    equity_proxy = (total_assets - total_debt) if (total_assets and total_debt) else None
-    dte = _div(total_debt, equity_proxy)
+    total_debt = _latest(bal, "Total Debt")
+    equity     = _book_equity(bal)
     dte_thresh, dte_limit = _sector_threshold(sector, "Adj. Debt-to-Equity")
+    # Use real book equity, not `assets − debt`: that proxy folds payables,
+    # deferred revenue and pensions into "equity" and understates leverage.
+    # Negative equity is itself a failure, not a pass via a negative ratio.
+    dte: Optional[float] = None
+    dte_pass: Optional[bool] = None
+    if total_debt is not None and equity is not None:
+        if equity > 0:
+            dte = total_debt / equity
+            dte_pass = dte < dte_limit
+        else:
+            dte_pass = False
     ratios.append(BuffettRatio(
         name="Adj. Debt-to-Equity", value=dte, threshold=dte_thresh,
-        passes=(dte < dte_limit) if dte is not None else None,
-        equation="Total Debt / (Total Assets − Total Debt)",
-        description="Debt relative to equity (assets minus debt as a proxy for equity).",
+        passes=dte_pass,
+        equation="Total Debt / Total Equity",
+        description="Debt relative to shareholders' equity.",
         buffett_logic="Great companies fund growth through equity and retained earnings, not debt.",
         category="Balance Sheet", weight=0.09,
     ))
@@ -301,9 +336,12 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     re_0 = _nth(bal, "Retained Earnings", 0)
     re_1 = _nth(bal, "Retained Earnings", 1)
     re_growth = _div(re_0, re_1) if (re_0 is not None and re_1 is not None) else None
+    # Compare signed values so shrinking a deficit (−2 → −1) counts as growth and
+    # a deepening deficit (−1 → −2) does not pass via a ratio > 1.0.
+    re_pass = (re_0 > re_1) if (re_0 is not None and re_1 is not None) else None
     ratios.append(BuffettRatio(
         name="Retained Earnings Growth", value=re_growth, threshold="> 1.0 (growing)",
-        passes=(re_growth > 1.0) if re_growth is not None else None,
+        passes=re_pass,
         equation="Retained Earnings (Year N) / Retained Earnings (Year N−1)",
         description="Whether retained earnings are growing year-over-year.",
         buffett_logic="Great companies grow retained earnings each year, compounding shareholder wealth.",

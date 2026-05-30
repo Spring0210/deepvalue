@@ -101,21 +101,28 @@ def test_mos_none_on_missing_inputs():
 
 # ── ROIC ──────────────────────────────────────────────────────────────────────
 
-def test_roic_happy_path():
-    # NOPAT = 1e9 * (1 - 0.21) = 0.79e9; invested capital = assets - cash = 4e9 - 1e9 = 3e9
+def test_roic_uses_financing_invested_capital():
+    # NOPAT = 1e9 * (1 - 0.21) = 0.79e9.
+    # Invested Capital = debt + equity − cash = 1 + 2 − 0.5 = 2.5e9.
+    # ROIC = 0.79 / 2.5 = 0.316.
     r = compute_roic(
         op_income=1e9, tax_rate=0.21, total_debt=1e9,
-        total_assets=4e9, cash=1e9,
+        total_equity=2e9, cash=0.5e9,
     )
-    assert r is not None and 0.20 < r < 0.30
+    assert r is not None and math.isclose(r, 0.316, abs_tol=0.002)
 
 
 def test_roic_none_on_negative_op_income():
-    assert compute_roic(-1, 0.21, 1e9, 4e9, 1e9) is None
+    assert compute_roic(-1, 0.21, 1e9, 2e9, 0.5e9) is None
 
 
-def test_roic_none_when_assets_missing():
-    assert compute_roic(1e9, 0.21, None, None, 0) is None
+def test_roic_none_when_equity_missing():
+    assert compute_roic(1e9, 0.21, 1e9, None, 0) is None
+
+
+def test_roic_none_when_invested_capital_nonpositive():
+    # Cash exceeds debt + equity → invested capital ≤ 0, ROIC undefined.
+    assert compute_roic(1e9, 0.21, total_debt=0, total_equity=1e9, cash=2e9) is None
 
 
 # ── circle_of_competence ──────────────────────────────────────────────────────
@@ -185,6 +192,7 @@ def test_compute_valuation_with_financials_populates_epv_and_roic():
             "2024-09-30": {
                 "Total Debt":                 110e9,
                 "Total Assets":               350e9,
+                "Common Stock Equity":         60e9,
                 "Cash And Cash Equivalents":  30e9,
             },
         },
