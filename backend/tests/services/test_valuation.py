@@ -8,10 +8,12 @@ from __future__ import annotations
 import math
 
 from app.services.valuation import (
+    capm_discount_rate,
     circle_of_competence_check,
     compute_roic,
     compute_valuation,
     dcf_intrinsic_value,
+    dcf_valuation_range,
     earnings_power_value,
     fcf_yield_value,
     graham_number,
@@ -125,6 +127,37 @@ def test_roic_none_when_invested_capital_nonpositive():
     assert compute_roic(1e9, 0.21, total_debt=0, total_equity=1e9, cash=2e9) is None
 
 
+# ── CAPM discount rate ────────────────────────────────────────────────────────
+
+def test_capm_discount_rate_uses_beta():
+    # rf 4.3% + beta 1.0 × erp 5.0% = 9.3%
+    assert math.isclose(capm_discount_rate(1.0, risk_free=0.043, erp=0.05), 0.093, abs_tol=1e-9)
+
+
+def test_capm_discount_rate_rises_with_beta():
+    assert capm_discount_rate(1.5) > capm_discount_rate(0.8)
+
+
+def test_capm_discount_rate_defaults_to_beta_one_when_missing():
+    assert capm_discount_rate(None) == capm_discount_rate(1.0)
+
+
+def test_capm_discount_rate_is_clamped():
+    assert capm_discount_rate(10.0) <= 0.16    # absurd high beta clamped
+    assert capm_discount_rate(-5.0) >= 0.06     # negative beta floored
+
+
+# ── DCF valuation range ───────────────────────────────────────────────────────
+
+def test_dcf_range_orders_bear_below_base_below_bull():
+    rng = dcf_valuation_range(fcf=10e9, shares=1e9, base_growth=0.10, base_discount=0.10)
+    assert rng["bear"] < rng["base"] < rng["bull"]
+
+
+def test_dcf_range_none_safe_on_missing_inputs():
+    assert dcf_valuation_range(None, 1e9, 0.10, 0.10) == {"bear": None, "base": None, "bull": None}
+
+
 # ── circle_of_competence ──────────────────────────────────────────────────────
 
 def test_circle_of_competence_flags_financial_sector():
@@ -177,6 +210,15 @@ def test_compute_valuation_returns_all_keys_without_financials():
         assert k in out
     # No financials passed → EPV and ROIC should be None
     assert out["epv"] is None and out["roic"] is None
+
+
+def test_compute_valuation_exposes_capm_discount_and_dcf_range():
+    out = compute_valuation(_quote(beta=1.2))
+    assert out["discount_rate"] is not None and out["discount_rate"] > 0
+    assert "dcf_bear" in out and "dcf_bull" in out
+    assert out["dcf_bear"] is not None and out["dcf_bull"] is not None
+    assert out["dcf_bear"] < out["dcf_bull"]
+    assert out["inputs"]["beta"] == 1.2
 
 
 def test_compute_valuation_with_financials_populates_epv_and_roic():

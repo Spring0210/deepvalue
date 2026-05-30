@@ -36,6 +36,54 @@ def graham_number(eps: Optional[float], bvps: Optional[float]) -> Optional[float
     return math.sqrt(22.5 * eps * bvps)
 
 
+# Defaults for the cost of equity. No live data feed, so these are static:
+# RISK_FREE ≈ 10-yr Treasury, EQUITY_RISK_PREMIUM ≈ long-run US equity premium.
+RISK_FREE = 0.043
+EQUITY_RISK_PREMIUM = 0.05
+_DISCOUNT_MIN = 0.06
+_DISCOUNT_MAX = 0.16
+
+
+def capm_discount_rate(
+    beta: Optional[float],
+    risk_free: float = RISK_FREE,
+    erp: float = EQUITY_RISK_PREMIUM,
+) -> float:
+    """Cost of equity via CAPM: risk_free + beta × equity-risk-premium.
+
+    A flat 10% for every company is the biggest DCF error — a utility and a
+    biotech can't share a discount rate. Missing beta defaults to the market
+    (1.0); the result is clamped to a sane band to tame yfinance outliers.
+    """
+    b = beta if beta is not None else 1.0
+    rate = risk_free + b * erp
+    return round(max(_DISCOUNT_MIN, min(_DISCOUNT_MAX, rate)), 4)
+
+
+def dcf_valuation_range(
+    fcf: Optional[float],
+    shares: Optional[float],
+    base_growth: float,
+    base_discount: float,
+    terminal_growth: float = 0.03,
+) -> dict:
+    """Bear / base / bull intrinsic values. A single-point DCF gives false
+    precision; the range is why a margin of safety exists.
+
+    Bear = lower growth + higher discount; bull = higher growth + lower discount.
+    """
+    bear_discount = base_discount + 0.02
+    bull_discount = max(terminal_growth + 0.01, base_discount - 0.02)
+    return {
+        "bear": dcf_intrinsic_value(
+            fcf, shares, max(0.0, base_growth - 0.04), bear_discount, terminal_growth),
+        "base": dcf_intrinsic_value(
+            fcf, shares, base_growth, base_discount, terminal_growth),
+        "bull": dcf_intrinsic_value(
+            fcf, shares, min(0.35, base_growth + 0.04), bull_discount, terminal_growth),
+    }
+
+
 def dcf_intrinsic_value(
     fcf: float,
     shares: float,
@@ -169,8 +217,12 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
     raw_growth   = quote.get("revenueGrowth") or 0.10
     default_growth = max(0.03, min(raw_growth, 0.25))
 
+    beta     = quote.get("beta")
+    discount = capm_discount_rate(beta)
+
     graham   = graham_number(eps, bvps)
-    dcf_base = dcf_intrinsic_value(fcf, shares, growth_rate=default_growth, discount_rate=0.10, terminal_growth=0.03)
+    dcf_range = dcf_valuation_range(fcf, shares, base_growth=default_growth, base_discount=discount)
+    dcf_base  = dcf_range["base"]
     fcf_val  = fcf_yield_value(fcf, shares, required_yield=0.07)
 
     # P/FCF
@@ -193,7 +245,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
         nopat = (op_income * (1 - (tax_rate or 0.21))) if (op_income and op_income > 0) else None
 
-        epv  = earnings_power_value(nopat, shares, discount_rate=0.10)
+        epv  = earnings_power_value(nopat, shares, discount_rate=discount)
         roic = compute_roic(op_income, tax_rate, total_debt, total_equity, cash)
 
     coc = circle_of_competence_check(quote)
@@ -201,11 +253,15 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
     return {
         "graham":            round(graham, 2) if graham else None,
         "dcf_base":          dcf_base,
+        "dcf_bear":          dcf_range["bear"],
+        "dcf_bull":          dcf_range["bull"],
         "fcf_yield_value":   fcf_val,
         "epv":               epv,
         "current_price":     price,
+        "discount_rate":     discount,
         "mos_graham":        margin_of_safety(price, graham),
         "mos_dcf":           margin_of_safety(price, dcf_base),
+        "mos_dcf_bear":      margin_of_safety(price, dcf_range["bear"]),
         "mos_fcf_yield":     margin_of_safety(price, fcf_val),
         "mos_epv":           margin_of_safety(price, epv),
         "roic":              roic,
@@ -217,5 +273,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
             "fcf":            fcf,
             "shares":         shares,
             "default_growth": round(default_growth, 4),
+            "beta":           beta,
+            "discount_rate":  discount,
         },
     }
