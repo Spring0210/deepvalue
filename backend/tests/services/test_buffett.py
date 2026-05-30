@@ -4,11 +4,24 @@ here we pin the bug-prone branches that silently produced wrong pass/fail."""
 
 from __future__ import annotations
 
-from app.services.buffett import compute_ratios
+from app.services.buffett import (
+    BuffettRatio,
+    _ramp_high,
+    _ramp_low,
+    compute_ratios,
+    compute_weighted_score,
+)
 
 
 def _by_name(ratios, name):
     return next(r for r in ratios if r.name == name)
+
+
+def _stub(score, weight):
+    return BuffettRatio(
+        name="x", value=None, threshold="", passes=None, description="",
+        buffett_logic="", category="", equation="", weight=weight, score=score,
+    )
 
 
 def _data(fin=None, bal=None, cf=None):
@@ -99,3 +112,46 @@ def test_interest_margin_passes_with_low_interest_burden():
     r = _by_name(compute_ratios(_data(fin=fin)), "Interest Expense Margin")
     assert r.value is not None and abs(r.value - 0.05) < 1e-6
     assert r.passes is True
+
+
+# ── B1: continuous (graded) scoring ───────────────────────────────────────────
+
+def test_ramp_high_partial_credit():
+    assert _ramp_high(0.40, 0.40, 0.20) == 1.0   # at/above knee → full
+    assert _ramp_high(0.50, 0.40, 0.20) == 1.0   # above knee → capped
+    assert _ramp_high(0.30, 0.40, 0.20) == 0.5   # midpoint
+    assert _ramp_high(0.20, 0.40, 0.20) == 0.0   # at edge
+    assert _ramp_high(0.10, 0.40, 0.20) == 0.0   # below edge
+    assert _ramp_high(None, 0.40, 0.20) is None
+
+
+def test_ramp_low_partial_credit():
+    assert _ramp_low(0.30, 0.30, 0.60) == 1.0    # at/below knee → full
+    assert _ramp_low(0.45, 0.30, 0.60) == 0.5    # midpoint
+    assert _ramp_low(0.60, 0.30, 0.60) == 0.0    # at edge
+    assert _ramp_low(0.90, 0.30, 0.60) == 0.0    # above edge
+    assert _ramp_low(None, 0.30, 0.60) is None
+
+
+def test_gross_margin_gets_partial_score_below_threshold():
+    # 30% gross margin vs 40% threshold (floor 20%) → graded score 0.5, but the
+    # strict pass badge still fails (it is below the stated 40% threshold).
+    fin = _one_year({"Gross Profit": 30.0, "Total Revenue": 100.0})
+    r = _by_name(compute_ratios(_data(fin=fin)), "Gross Margin")
+    assert r.passes is False
+    assert r.score is not None and abs(r.score - 0.5) < 1e-6
+
+
+def test_binary_metric_score_mirrors_pass():
+    # EPS growth is a hard gate, not a ramp → score is 1.0 / 0.0 / None.
+    fin = {"2024": {"Basic EPS": 3.0}, "2023": {"Basic EPS": 2.0}}
+    r = _by_name(compute_ratios(_data(fin=fin)), "EPS Growth (YoY)")
+    assert r.passes is True and r.score == 1.0
+
+
+def test_weighted_score_uses_continuous_score():
+    assert compute_weighted_score([_stub(0.5, 0.5), _stub(1.0, 0.5)]) == 75.0
+
+
+def test_weighted_score_ignores_na_metrics():
+    assert compute_weighted_score([_stub(None, 0.5), _stub(1.0, 0.5)]) == 100.0

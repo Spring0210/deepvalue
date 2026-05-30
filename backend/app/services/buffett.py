@@ -13,6 +13,7 @@ class BuffettRatio:
     category: str
     equation: str
     weight: float   # contribution to weighted score (all weights sum to 1.0)
+    score: Optional[float] = None   # graded 0..1 credit (None = N/A); feeds the gauge
 
 
 def _div(a: Optional[float], b: Optional[float]) -> Optional[float]:
@@ -49,6 +50,57 @@ def _book_equity(bal: dict) -> Optional[float]:
         if v is not None:
             return v
     return None
+
+
+# ── Graded scoring ────────────────────────────────────────────────────────────
+# Binary pass/fail throws away the distance from the threshold: a 39% and a 12%
+# gross margin both "fail" a 40% gate and contribute nothing. These ramps give
+# linear partial credit between a full-credit knee and a zero-credit edge.
+
+def _ramp_high(value: Optional[float], knee: float, edge: float) -> Optional[float]:
+    """Higher-is-better: 1.0 at/above `knee`, 0.0 at/below `edge`, linear between."""
+    if value is None:
+        return None
+    if value >= knee:
+        return 1.0
+    if value <= edge:
+        return 0.0
+    return round((value - edge) / (knee - edge), 3)
+
+
+def _ramp_low(value: Optional[float], knee: float, edge: float) -> Optional[float]:
+    """Lower-is-better: 1.0 at/below `knee`, 0.0 at/above `edge`, linear between."""
+    if value is None:
+        return None
+    if value <= knee:
+        return 1.0
+    if value >= edge:
+        return 0.0
+    return round((edge - value) / (edge - knee), 3)
+
+
+def _binary_score(passes: Optional[bool]) -> Optional[float]:
+    if passes is None:
+        return None
+    return 1.0 if passes else 0.0
+
+
+def _graded(
+    value: Optional[float], kind: str, knee: float, edge: float, passes: Optional[bool],
+) -> Optional[float]:
+    """Continuous score for ramp metrics; falls back to the binary pass flag when
+    the value is missing but the metric was still judged (e.g. an operating loss
+    forced to fail)."""
+    s = _ramp_high(value, knee, edge) if kind == "high" else _ramp_low(value, knee, edge)
+    return s if s is not None else _binary_score(passes)
+
+
+# Ramp metrics get graded credit at construction; everything else mirrors `passes`.
+_RAMP_METRICS = {
+    "Gross Margin", "SG&A Margin", "R&D Margin", "Depreciation Margin",
+    "Interest Expense Margin", "Net Profit Margin", "Adj. Debt-to-Equity",
+    "CapEx Margin",
+}
 
 
 def _sector_threshold(sector: str, metric: str) -> tuple[str, float]:
@@ -105,14 +157,15 @@ def _sector_threshold(sector: str, metric: str) -> tuple[str, float]:
 
 def compute_weighted_score(ratios: list[BuffettRatio]) -> float:
     """
-    Weighted score 0-100, normalized to exclude N/A metrics.
-    Score = sum(weight for passing) / sum(weight for non-NA) * 100
+    Weighted score 0-100, normalized to exclude N/A metrics. Uses graded `score`
+    (0..1) so metrics near their threshold earn partial credit:
+    Score = sum(weight × score) / sum(weight for non-NA) × 100.
     """
-    passing_weight = sum(r.weight for r in ratios if r.passes is True)
-    scored_weight  = sum(r.weight for r in ratios if r.passes is not None)
+    scored_weight = sum(r.weight for r in ratios if r.score is not None)
     if scored_weight == 0:
         return 0.0
-    return round(passing_weight / scored_weight * 100, 1)
+    earned = sum(r.weight * r.score for r in ratios if r.score is not None)
+    return round(earned / scored_weight * 100, 1)
 
 
 def compute_trend_adjustment(data: dict) -> float:
@@ -174,6 +227,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="Gross Margin", value=gm, threshold=gm_thresh,
         passes=(gm >= gm_limit) if gm is not None else None,
+        score=_ramp_high(gm, gm_limit, gm_limit * 0.5),
         equation="Gross Profit / Total Revenue",
         description="Measures how much revenue remains after direct production costs.",
         buffett_logic="Signals a durable competitive advantage — the company isn't competing on price.",
@@ -187,6 +241,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="SG&A Margin", value=sgam, threshold=sga_thresh,
         passes=(sgam <= sga_limit) if sgam is not None else None,
+        score=_ramp_low(sgam, sga_limit, sga_limit * 2),
         equation="SG&A Expense / Gross Profit",
         description="Selling, General & Administrative expenses as a share of gross profit.",
         buffett_logic="Wide-moat companies don't need heavy overhead spending to operate.",
@@ -200,6 +255,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="R&D Margin", value=rndm, threshold=rnd_thresh,
         passes=(rndm <= rnd_limit) if rndm is not None else None,
+        score=_ramp_low(rndm, rnd_limit, rnd_limit * 2),
         equation="R&D Expense / Gross Profit",
         description="Research & Development spending as a share of gross profit.",
         buffett_logic="Heavy R&D dependence means the competitive advantage isn't guaranteed to last.",
@@ -212,6 +268,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="Depreciation Margin", value=depm, threshold="≤ 10%",
         passes=(depm <= 0.10) if depm is not None else None,
+        score=_ramp_low(depm, 0.10, 0.20),
         equation="Reconciled Depreciation / Gross Profit",
         description="Depreciation & amortization as a share of gross profit.",
         buffett_logic="Great businesses don't need heavy depreciating assets to maintain their competitive edge.",
@@ -234,6 +291,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="Interest Expense Margin", value=intm, threshold=int_thresh,
         passes=intm_pass,
+        score=_graded(intm, "low", int_limit, int_limit * 2, intm_pass),
         equation="Interest Expense / Operating Income",
         description="How much of operating income is consumed by interest payments.",
         buffett_logic="Great businesses self-finance with earnings — they don't need much debt.",
@@ -260,6 +318,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="Net Profit Margin", value=nm, threshold=nm_thresh,
         passes=(nm >= nm_limit) if nm is not None else None,
+        score=_ramp_high(nm, nm_limit, nm_limit * 0.5),
         equation="Net Income / Total Revenue",
         description="Percentage of revenue that becomes net profit.",
         buffett_logic="Great companies consistently convert a high percentage of revenue into net profit.",
@@ -315,6 +374,7 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="Adj. Debt-to-Equity", value=dte, threshold=dte_thresh,
         passes=dte_pass,
+        score=_graded(dte, "low", dte_limit, dte_limit * 2, dte_pass),
         equation="Total Debt / Total Equity",
         description="Debt relative to shareholders' equity.",
         buffett_logic="Great companies fund growth through equity and retained earnings, not debt.",
@@ -371,11 +431,17 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     ratios.append(BuffettRatio(
         name="CapEx Margin", value=cxm, threshold=cx_thresh,
         passes=(cxm < cx_limit) if cxm is not None else None,
+        score=_ramp_low(cxm, cx_limit, cx_limit * 2),
         equation="CapEx / Net Income From Continuing Operations",
         description="Capital expenditure as a percentage of net income.",
         buffett_logic="Great companies don't need heavy equipment investment to sustain their profits.",
         category="Cash Flow", weight=0.08,
     ))
+
+    # Non-ramp metrics (bands, existence checks, hard gates) score 1/0 from pass.
+    for r in ratios:
+        if r.name not in _RAMP_METRICS:
+            r.score = _binary_score(r.passes)
 
     total_weight = sum(r.weight for r in ratios)
     if abs(total_weight - 1.0) >= 0.001:
