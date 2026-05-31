@@ -173,6 +173,35 @@ function Card({ title, badge, lens, children }: {
   )
 }
 
+// ── Progressive disclosure — primary lenses first, the rest behind a toggle ──
+function MethodSection({ methods, lenses }: {
+  methods: { key: string; el: React.ReactNode }[]
+  lenses: Record<string, { tier: string }> | null | undefined
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const tierOf = (k: string) => lenses?.[k]?.tier ?? 'secondary'
+  const rank   = (k: string) => (({ primary: 0, secondary: 1, not_applicable: 2 } as Record<string, number>)[tierOf(k)] ?? 1)
+  const sorted = [...methods].sort((a, b) => rank(a.key) - rank(b.key))
+  const primary = sorted.filter(m => tierOf(m.key) === 'primary')
+  const rest    = sorted.filter(m => tierOf(m.key) !== 'primary')
+
+  return (
+    <>
+      {primary.map(m => <div key={m.key}>{m.el}</div>)}
+      {rest.length > 0 && (
+        <button
+          onClick={() => setShowAll(s => !s)}
+          className="w-full rounded-xl py-2.5 text-[12px] font-medium transition-colors hover:brightness-125"
+          style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(235,235,245,0.55)', border: '1px solid rgba(255,255,255,0.07)' }}
+        >
+          {showAll ? 'Hide other methods' : `Show ${rest.length} more valuation method${rest.length > 1 ? 's' : ''}`}
+        </button>
+      )}
+      {showAll && rest.map(m => <div key={m.key}>{m.el}</div>)}
+    </>
+  )
+}
+
 // ── No-data placeholder ──────────────────────────────────────────────────────
 function NoData({ reason }: { reason: string }) {
   return (
@@ -482,7 +511,9 @@ export default function ValuationPanel() {
         </p>
       </Card>
 
-      {/* Graham Number */}
+      {/* Valuation methods — primary lenses first, the rest behind a toggle */}
+      <MethodSection lenses={valuation.lenses} methods={[
+        { key: 'graham', el: (
       <Card title="Graham Number" badge="√(22.5 × EPS × BVPS)" lens={valuation.lenses?.graham}>
         {graham ? (
           <div className="space-y-3">
@@ -510,8 +541,8 @@ export default function ValuationPanel() {
           }${!valuation.inputs.bvps ? ' Book value not available.' : ''}`} />
         )}
       </Card>
-
-      {/* DCF Calculator */}
+        ) },
+        { key: 'dcf_fcf', el: (
       <Card title="DCF Calculator" badge="10-Year Discounted Cash Flow" lens={valuation.lenses?.dcf_fcf}>
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
@@ -570,8 +601,8 @@ export default function ValuationPanel() {
           <NoData reason="DCF requires Free Cash Flow and Shares Outstanding data from yfinance." />
         )}
       </Card>
-
-      {/* FCF Yield Valuation */}
+        ) },
+        { key: 'fcf_yield', el: (
       <Card title="FCF Yield Valuation" badge="FCF/Share ÷ Required Yield" lens={valuation.lenses?.fcf_yield}>
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
@@ -599,8 +630,8 @@ export default function ValuationPanel() {
           <NoData reason="FCF Yield Valuation requires Free Cash Flow and Shares Outstanding." />
         )}
       </Card>
-
-      {/* EPV */}
+        ) },
+        { key: 'epv', el: (
       <Card title="Earnings Power Value" badge="Greenwald No-Growth DCF" lens={valuation.lenses?.epv}>
         {valuation.epv != null ? (
           <div className="space-y-3">
@@ -619,6 +650,8 @@ export default function ValuationPanel() {
           <NoData reason="EPV requires Operating Income data from financial statements." />
         )}
       </Card>
+        ) },
+      ]} />
 
     </div>
   )
