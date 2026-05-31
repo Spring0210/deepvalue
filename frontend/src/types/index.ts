@@ -60,13 +60,18 @@ export interface StockQuote {
 export interface ValuationVerdict {
   signal: string
   tone: 'pass' | 'watch' | 'fail' | 'neutral'
-  blended_iv: number | null
-  blended_mos: number | null
+  fair_low: number | null
+  fair_base: number | null
+  fair_high: number | null
+  floor: number | null
+  price: number | null
+  mos: number | null
   required_mos: number
+  implied_growth: number | null
+  reference_growth: number | null
   confidence: string
-  agreement: string
-  methods: Record<string, { iv: number; mos: number }>
   caveats: string[]
+  rationale: string
 }
 
 export interface StockValuation {

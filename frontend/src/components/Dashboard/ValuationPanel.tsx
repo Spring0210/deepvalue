@@ -21,14 +21,6 @@ const VERDICT_TONE: Record<string, { fg: string; bg: string }> = {
   neutral: { fg: '#9CA3AF', bg: 'rgba(156,163,175,0.10)' },
 }
 
-// Mirror the backend tiering so the margin-of-safety slider updates the call live.
-function signalFor(mos: number | null, required: number): { label: string; tone: keyof typeof VERDICT_TONE } {
-  if (mos === null) return { label: 'Insufficient data', tone: 'neutral' }
-  if (mos >= required) return { label: 'Buy', tone: 'pass' }
-  if (mos >= 0)        return { label: 'Accumulate', tone: 'watch' }
-  if (mos >= -0.15)    return { label: 'Hold / review', tone: 'watch' }
-  return { label: 'Overvalued', tone: 'fail' }
-}
 
 // ── DCF math (mirrors backend, runs on frontend for live slider updates) ────
 function calcDCF(
@@ -188,53 +180,84 @@ function StatCell({ label, value, sub }: { label: string; value: string; sub?: s
   )
 }
 
-// ── Verdict hero — the one actionable answer ─────────────────────────────────
-function VerdictHero({ v, price, sym, required, onRequired }: {
+// ── Verdict hero — price positioned in a growth-aware fair-value range ────────
+function VerdictHero({ v, sym, required, onRequired }: {
   v: NonNullable<ReturnType<typeof useStock>['valuation']>['verdict']
-  price: number | null
   sym: string
   required: number
   onRequired: (n: number) => void
 }) {
-  if (!v || v.blended_iv === null || price === null) return null
-  const mos = (v.blended_iv - price) / v.blended_iv
-  const sig = signalFor(mos, required)
-  const t   = VERDICT_TONE[sig.tone]
-  const progress = Math.max(0, Math.min(1, mos / Math.max(required, 1e-4)))
+  if (!v || v.fair_base === null || v.price === null || v.fair_low === null || v.fair_high === null) return null
+  const t = VERDICT_TONE[v.tone]
+  const { fair_low: lo, fair_base: base, fair_high: hi, price } = v
+  const buyAt = base * (1 - required)            // price for the required discount to base
+
+  // Scale: pad the [low..high, price, buy] span so every marker is visible.
+  const loEnd = Math.min(lo, price, buyAt)
+  const hiEnd = Math.max(hi, price)
+  const span  = (hiEnd - loEnd) || 1
+  const pad   = span * 0.08
+  const min   = loEnd - pad, max = hiEnd + pad
+  const pct   = (x: number) => `${((x - min) / (max - min)) * 100}%`
 
   return (
     <div className="rounded-2xl p-5" style={{ background: '#1C1C1E', border: '1px solid rgba(255,255,255,0.07)' }}>
       <p className="text-[10px] uppercase tracking-wider mb-3" style={{ color: 'rgba(235,235,245,0.35)' }}>
-        Verdict · margin of safety
+        Valuation · fair-value range
       </p>
 
-      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-        <div>
-          <div className="text-4xl font-bold tabular-nums" style={{ color: t.fg }}>{sig.label}</div>
-          <p className="text-[12px] mt-1" style={{ color: 'rgba(235,235,245,0.45)' }}>{v.agreement}</p>
-        </div>
-        <div className="flex gap-5 ml-auto text-right">
-          {[
-            { k: 'Blended value', val: `${sym}${v.blended_iv.toFixed(2)}`, color: 'rgba(235,235,245,0.8)' },
-            { k: 'Price',         val: `${sym}${price.toFixed(2)}`,        color: 'rgba(235,235,245,0.8)' },
-            { k: 'Margin',        val: `${mos >= 0 ? '+' : ''}${(mos * 100).toFixed(1)}%`, color: t.fg },
-          ].map(s => (
-            <div key={s.k}>
-              <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.3)' }}>{s.k}</p>
-              <p className="text-lg font-semibold font-mono tabular-nums" style={{ color: s.color }}>{s.val}</p>
-            </div>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+        <span className="text-base font-semibold px-2.5 py-1 rounded-lg" style={{ background: t.bg, color: t.fg }}>
+          {v.signal}
+        </span>
+        <span className="text-[12px] flex-1 min-w-[12rem]" style={{ color: 'rgba(235,235,245,0.5)' }}>{v.rationale}</span>
+        <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(235,235,245,0.55)' }}>
+          Confidence: {v.confidence}
+        </span>
       </div>
 
-      <div className="mt-4 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-        <div className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${progress * 100}%`, background: t.fg }} />
+      {/* Range bar: fair-value band, current price, and the buy threshold */}
+      <div className="relative mt-7 mb-6 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        {/* fair-value band low→high */}
+        <div className="absolute h-full rounded-full" style={{ left: pct(lo), width: `calc(${pct(hi)} - ${pct(lo)})`, background: 'rgba(90,200,245,0.22)' }} />
+        {/* buy threshold (dashed marker) */}
+        <div className="absolute -top-1.5 -bottom-1.5 w-px" style={{ left: pct(buyAt), background: 'rgba(52,211,153,0.5)' }} />
+        {/* current price marker */}
+        <div className="absolute -top-2 -bottom-2 w-0.5 rounded" style={{ left: pct(price), background: t.fg }} />
+        {/* labels */}
+        <span className="absolute -top-6 -translate-x-1/2 text-[10px] font-mono tabular-nums" style={{ left: pct(price), color: t.fg }}>
+          {sym}{price.toFixed(0)}
+        </span>
+        <span className="absolute top-4 -translate-x-1/2 text-[10px] font-mono tabular-nums" style={{ left: pct(lo), color: 'rgba(235,235,245,0.4)' }}>
+          {sym}{lo.toFixed(0)}
+        </span>
+        <span className="absolute top-4 -translate-x-1/2 text-[10px] font-mono tabular-nums" style={{ left: pct(hi), color: 'rgba(235,235,245,0.4)' }}>
+          {sym}{hi.toFixed(0)}
+        </span>
+      </div>
+      <div className="flex justify-between text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.28)' }}>
+        <span>Conservative</span><span>Fair value {sym}{base.toFixed(0)}</span><span>Optimistic</span>
       </div>
 
+      {/* Implied-growth honesty line */}
+      {v.implied_growth !== null && (
+        <p className="mt-4 text-[12px]" style={{ color: 'rgba(235,235,245,0.55)' }}>
+          Price implies ~<span className="font-mono">{(v.implied_growth * 100).toFixed(0)}%</span>/yr cash-flow growth
+          {v.reference_growth !== null && <> vs ~<span className="font-mono">{(v.reference_growth * 100).toFixed(0)}%</span> recently delivered</>}.
+        </p>
+      )}
+      {v.floor !== null && (
+        <p className="mt-1 text-[12px]" style={{ color: 'rgba(235,235,245,0.4)' }}>
+          No-growth floor (EPV): <span className="font-mono">{sym}{v.floor.toFixed(0)}</span>.
+        </p>
+      )}
+
+      {/* Required margin-of-safety control → live buy threshold */}
       <div className="mt-4">
         <div className="flex justify-between mb-1">
-          <span className="text-[11px]" style={{ color: 'rgba(235,235,245,0.5)' }}>Required margin of safety</span>
+          <span className="text-[11px]" style={{ color: 'rgba(235,235,245,0.5)' }}>
+            Required margin of safety — buy below <span className="font-mono" style={{ color: '#34D399' }}>{sym}{buyAt.toFixed(0)}</span>
+          </span>
           <span className="text-[11px] font-mono font-semibold" style={{ color: '#0A84FF' }}>{(required * 100).toFixed(0)}%</span>
         </div>
         <input
@@ -245,14 +268,8 @@ function VerdictHero({ v, price, sym, required, onRequired }: {
         />
       </div>
 
-      <div className="mt-3">
-        <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: t.bg, color: t.fg }}>
-          Confidence: {v.confidence}
-        </span>
-      </div>
-
       {v.caveats.length > 0 && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-3 space-y-1">
           {v.caveats.map((c, i) => (
             <li key={i} className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.5)' }}>⚠ {c}</li>
           ))}
@@ -308,7 +325,7 @@ export default function ValuationPanel() {
     <div className="space-y-4">
 
       {/* Verdict — the single actionable answer */}
-      <VerdictHero v={valuation.verdict} price={price} sym={sym} required={requiredMos} onRequired={setRequiredMos} />
+      <VerdictHero v={valuation.verdict} sym={sym} required={requiredMos} onRequired={setRequiredMos} />
 
       {/* Circle of Competence warning */}
       {coc && !coc.within && (
