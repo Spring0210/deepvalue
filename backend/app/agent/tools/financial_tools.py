@@ -105,7 +105,8 @@ async def _get_valuation(args: TickerArgs) -> dict[str, Any]:
 async def _get_moat(args: TickerArgs) -> dict[str, Any]:
     ticker = args.ticker.upper()
     quote  = await get_stock_quote(ticker)
-    return {"ticker": ticker, **compute_moat(quote)}
+    data   = await get_stock_data(ticker)
+    return {"ticker": ticker, **compute_moat(quote, data)}
 
 
 # yfinance period → interval that the existing service layer uses for charts.

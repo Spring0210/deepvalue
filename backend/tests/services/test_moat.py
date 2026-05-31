@@ -85,3 +85,53 @@ def test_scores_in_unit_interval():
     })
     for score in out["scores"].values():
         assert 0.0 <= score <= 1.0
+
+
+# ── D: evidence-based strength (ROIC persistence + margin stability) ──────────
+
+def _years(fin_row, bal_row, n=4):
+    fin, bal = {}, {}
+    for i in range(n):
+        key = f"{2024 - i}-12-31"
+        fin[key] = dict(fin_row)
+        bal[key] = dict(bal_row)
+    return {"financials": fin, "balanceSheet": bal, "cashflow": {}}
+
+
+def test_pe_no_longer_inflates_moat_scores():
+    # P/E is market sentiment, not moat evidence; it must not change scores.
+    base = {
+        "sector": "Consumer Defensive", "grossMargins": 0.55,
+        "operatingMargins": 0.20, "roe": 0.30, "revenueGrowth": 0.05,
+        "marketCap": 250e9,
+    }
+    assert compute_moat({**base, "pe": 8})["scores"] == compute_moat({**base, "pe": 40})["scores"]
+
+
+def test_wide_on_persistent_high_roic_and_stable_margins():
+    data = _years(
+        {"Operating Income": 100.0, "Tax Provision": 21.0, "Pretax Income": 100.0,
+         "Gross Profit": 60.0, "Total Revenue": 100.0},
+        {"Total Debt": 0.0, "Common Stock Equity": 400.0, "Cash And Cash Equivalents": 0.0},
+    )
+    quote = {
+        "sector": "Technology", "grossMargins": 0.60, "operatingMargins": 0.30,
+        "roe": 0.20, "revenueGrowth": 0.10, "marketCap": 1e12,
+    }
+    out = compute_moat(quote, data)
+    assert out["strength"] == "Wide"
+    assert any("ROIC" in ind for ind in out["indicators"])
+
+
+def test_none_when_roic_persistently_below_hurdle():
+    data = _years(
+        {"Operating Income": 5.0, "Tax Provision": 1.0, "Pretax Income": 5.0,
+         "Gross Profit": 20.0, "Total Revenue": 100.0},
+        {"Total Debt": 0.0, "Common Stock Equity": 400.0, "Cash And Cash Equivalents": 0.0},
+    )
+    quote = {
+        "sector": "Industrials", "grossMargins": 0.20, "operatingMargins": 0.05,
+        "roe": 0.02, "revenueGrowth": -0.05, "marketCap": 1e9,
+    }
+    out = compute_moat(quote, data)
+    assert out["strength"] == "None"
