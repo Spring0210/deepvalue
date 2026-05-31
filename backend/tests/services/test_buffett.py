@@ -182,7 +182,7 @@ def test_roe_metric_present():
         fin=_one_year({"Net Income": 80.0}),
         bal=_one_year({"Common Stock Equity": 400.0}),
     )
-    r = _by_name(compute_ratios(data), "ROE (FY)")
+    r = _by_name(compute_ratios(data), "ROE (TTM)")
     assert r.value is not None and abs(r.value - 0.20) < 1e-6
     assert r.passes is True
 
@@ -192,14 +192,35 @@ def test_roe_fails_on_negative_equity():
         fin=_one_year({"Net Income": 80.0}),
         bal=_one_year({"Common Stock Equity": -50.0}),
     )
-    r = _by_name(compute_ratios(data), "ROE (FY)")
+    r = _by_name(compute_ratios(data), "ROE (TTM)")
     assert r.passes is False
 
 
 def test_roe_na_when_equity_missing():
     data = _data(fin=_one_year({"Net Income": 80.0}))
-    r = _by_name(compute_ratios(data), "ROE (FY)")
+    r = _by_name(compute_ratios(data), "ROE (TTM)")
     assert r.value is None and r.passes is None and r.score is None
+
+
+def test_roe_and_roic_use_trailing_average_equity_when_injected():
+    # The TTM normalizer injects "_TTM Avg Equity"; ROE/ROIC must prefer it over
+    # the point-in-time book equity.
+    data = _data(
+        fin=_one_year({"Net Income": 40.0, "Operating Income": 50.0,
+                       "Tax Provision": 10.0, "Pretax Income": 50.0}),
+        bal=_one_year({
+            "Common Stock Equity": 400.0,   # point-in-time
+            "_TTM Avg Equity": 200.0,        # trailing-year average (preferred)
+            "_TTM Avg Total Debt": 0.0,
+            "_TTM Avg Cash": 0.0,
+        }),
+    )
+    roe = _by_name(compute_ratios(data), "ROE (TTM)")
+    assert abs(roe.value - 0.20) < 1e-6   # 40 / 200 (avg), not 40 / 400
+
+    # NOPAT = 50 × (1 − 0.20 tax) = 40; IC = avg equity 200 → ROIC 0.20 (not 0.10).
+    roic = _by_name(compute_ratios(data), "ROIC")
+    assert abs(roic.value - 0.20) < 1e-6
 
 
 def test_scorecard_has_sixteen_metrics_and_weights_sum_to_one():

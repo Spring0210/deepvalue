@@ -117,7 +117,8 @@ export default function MoatCard() {
           <span style={{ color: '#30D158' }}>Wide</span> = durable multi-year advantage. {' '}
           <span style={{ color: '#FF9F0A' }}>Narrow</span> = some advantage but under competitive pressure. {' '}
           <span style={{ color: '#FF453A' }}>None</span> = commoditized business.
-          Derived from sector, margins, ROE, growth, and valuation signals.
+          Strength is rated on multi-year ROIC persistence and gross-margin stability;
+          the type below is inferred from sector and margins.
         </p>
       </div>
     </div>

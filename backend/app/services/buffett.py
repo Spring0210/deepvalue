@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from app.services.valuation import compute_roic
+from app.services.valuation import compute_roic, invested_capital_inputs
 
 
 @dataclass
@@ -101,7 +101,7 @@ def _graded(
 _RAMP_METRICS = {
     "Gross Margin", "SG&A Margin", "R&D Margin", "Depreciation Margin",
     "Interest Expense Margin", "Net Profit Margin", "Adj. Debt-to-Equity",
-    "CapEx Margin", "ROIC", "ROE (FY)",
+    "CapEx Margin", "ROIC", "ROE (TTM)",
 }
 
 
@@ -347,22 +347,22 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     # Munger: ROIC is the single most important metric; Buffett leans on ROE.
     # Both are computed from the statements so compute_ratios stays (data, sector).
 
-    bs_equity = _book_equity(bal)
+    # Invested-capital inputs: trailing-year averages from the TTM normalizer
+    # when present, else point-in-time book values.
+    ic_debt, ic_equity, ic_cash = invested_capital_inputs(bal)
 
     # 9. ROIC (return on invested capital)
     tax_prov = _latest(fin, "Tax Provision")
     pretax   = _latest(fin, "Pretax Income")
     tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
-    roic = compute_roic(
-        op_income, tax_rate, _latest(bal, "Total Debt"), bs_equity,
-        _latest(bal, "Cash And Cash Equivalents"),
-    )
+    roic = compute_roic(op_income, tax_rate, ic_debt, ic_equity, ic_cash)
     ratios.append(BuffettRatio(
         name="ROIC", value=roic, threshold="≥ 12%",
         passes=(roic >= 0.12) if roic is not None else None,
         score=_ramp_high(roic, 0.12, 0.06),
         equation="NOPAT / (Total Debt + Equity − Cash)",
-        description="After-tax operating return on the capital the business employs.",
+        description="After-tax operating return on the capital the business employs "
+                    "(trailing twelve months over average invested capital).",
         buffett_logic="Munger's key test: durable businesses compound capital at high ROIC.",
         category="Returns on Capital", weight=0.12,
     ))
@@ -371,20 +371,21 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
     net_income_re = _latest(fin, "Net Income")
     roe: Optional[float] = None
     roe_pass: Optional[bool] = None
-    if net_income_re is not None and bs_equity is not None:
-        if bs_equity > 0:
-            roe = net_income_re / bs_equity
+    if net_income_re is not None and ic_equity is not None:
+        if ic_equity > 0:
+            roe = net_income_re / ic_equity
             roe_pass = roe >= 0.15
         else:
             roe_pass = False   # negative book equity is a red flag, not a high ROE
     ratios.append(BuffettRatio(
-        name="ROE (FY)", value=roe, threshold="≥ 15%",
+        name="ROE (TTM)", value=roe, threshold="≥ 15%",
         passes=roe_pass,
         score=_graded(roe, "high", 0.15, 0.075, roe_pass),
-        equation="Net Income / Total Equity",
-        description="Net profit on shareholders' equity, latest fiscal year. "
-                    "The overview's ROE is Yahoo's trailing-12-month figure, so "
-                    "the two differ for fast-growing companies.",
+        equation="Net Income / Avg Equity",
+        description="Trailing-12-month net income on average shareholders' equity "
+                    "(latest fiscal year when quarterly data is unavailable). Uses "
+                    "average equity, so it can differ slightly from the overview's "
+                    "Yahoo figure.",
         buffett_logic="Buffett favours businesses that earn consistently high returns on equity.",
         category="Returns on Capital", weight=0.10,
     ))

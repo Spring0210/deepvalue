@@ -29,6 +29,23 @@ def _book_equity(bal: dict) -> Optional[float]:
     return None
 
 
+def invested_capital_inputs(bal: dict) -> tuple:
+    """(debt, equity, cash) for ROE/ROIC, preferring the trailing-year averages
+    injected by the TTM normalizer and falling back to point-in-time book values
+    (annual or MRQ). Averaging a period-average stock against a TTM flow is the
+    textbook treatment; the fallback keeps annual-only data working unchanged."""
+    debt   = _latest(bal, "_TTM Avg Total Debt")
+    equity = _latest(bal, "_TTM Avg Equity")
+    cash   = _latest(bal, "_TTM Avg Cash")
+    if debt is None:
+        debt = _latest(bal, "Total Debt")
+    if equity is None:
+        equity = _book_equity(bal)
+    if cash is None:
+        cash = _latest(bal, "Cash And Cash Equivalents")
+    return debt, equity, cash
+
+
 # ── Valuation models ──────────────────────────────────────────────────────────
 
 def graham_number(eps: Optional[float], bvps: Optional[float]) -> Optional[float]:
@@ -240,9 +257,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         op_income    = _latest(fin, "Operating Income")
         tax_prov     = _latest(fin, "Tax Provision")
         pretax       = _latest(fin, "Pretax Income")
-        total_debt   = _latest(bal, "Total Debt")
-        total_equity = _book_equity(bal)
-        cash         = _latest(bal, "Cash And Cash Equivalents")
+        total_debt, total_equity, cash = invested_capital_inputs(bal)
 
         tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
         nopat = (op_income * (1 - (tax_rate or 0.21))) if (op_income and op_income > 0) else None
