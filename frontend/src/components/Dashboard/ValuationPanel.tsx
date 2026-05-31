@@ -410,6 +410,39 @@ export default function ValuationPanel() {
         </Card>
       )}
 
+      {/* Through-cycle earnings — only for cyclicals (P/E-trap defense) */}
+      {valuation.through_cycle && (
+        <Card title="Through-cycle earnings" badge="Mid-cycle" lens={valuation.lenses?.epv}>
+          <div className="grid grid-cols-2 gap-3">
+            <StatCell label="EPS — trailing"    value={valuation.through_cycle.ttm_eps != null ? `${sym}${valuation.through_cycle.ttm_eps.toFixed(2)}` : '—'} />
+            <StatCell label="EPS — mid-cycle"    value={`${sym}${valuation.through_cycle.normalized_eps.toFixed(2)}`} sub="8-yr average" />
+            <StatCell label="P/E on trailing"    value={valuation.through_cycle.ttm_pe != null ? `${valuation.through_cycle.ttm_pe.toFixed(1)}x` : '—'} />
+            <StatCell label="P/E on mid-cycle"   value={valuation.through_cycle.normalized_pe != null ? `${valuation.through_cycle.normalized_pe.toFixed(1)}x` : '—'} />
+          </div>
+          {valuation.through_cycle.peak_earnings_trap && (
+            <p className="text-[11px] leading-relaxed mt-3" style={{ color: '#FBBF24' }}>
+              ⚠ Peak-earnings trap: cheap on trailing earnings but expensive on mid-cycle — typical near a cyclical top. A low P/E here is a danger, not a bargain.
+            </p>
+          )}
+          <p className="text-[11px] leading-relaxed mt-2" style={{ color: 'rgba(235,235,245,0.25)' }}>
+            Cyclicals should be judged on normalized mid-cycle earnings, not the latest year.
+          </p>
+        </Card>
+      )}
+
+      {/* PEG / PEGY — growth multiple (Lynch) */}
+      {valuation.peg && (
+        <Card title="PEG / growth" badge="Lynch">
+          <div className="grid grid-cols-2 gap-3">
+            <StatCell label="PEG" value={valuation.peg.peg.toFixed(2)} sub={valuation.peg.label} />
+            <StatCell label="PEGY (incl. yield)" value={valuation.peg.pegy != null ? valuation.peg.pegy.toFixed(2) : '—'} />
+          </div>
+          <p className="text-[11px] leading-relaxed mt-3" style={{ color: 'rgba(235,235,245,0.25)' }}>
+            Lynch's growth yardstick: pay no more than the growth rate (PEG ≈ 1). PEGY adds the dividend yield to growth.
+          </p>
+        </Card>
+      )}
+
       {/* ROIC + P/FCF row */}
       {(valuation.roic != null || valuation.price_to_fcf != null) && (
         <Card title="Capital Efficiency">

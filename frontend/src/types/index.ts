@@ -88,10 +88,26 @@ export interface ValuationLens {
   label: string
 }
 
+export interface ThroughCycle {
+  normalized_eps: number
+  ttm_eps: number | null
+  ttm_pe: number | null
+  normalized_pe: number | null
+  peak_earnings_trap: boolean
+}
+
+export interface PegAssessment {
+  peg: number
+  pegy: number | null
+  label: string
+}
+
 export interface StockValuation {
   verdict: ValuationVerdict | null
   price_decomposition: PriceDecomposition | null
   lenses: Record<string, ValuationLens> | null
+  through_cycle: ThroughCycle | null
+  peg: PegAssessment | null
   graham: number | null
   dcf_base: number | null
   dcf_bear: number | null
