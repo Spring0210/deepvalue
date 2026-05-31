@@ -223,91 +223,138 @@ def circle_of_competence_check(quote: dict) -> dict:
     return {"within": len(flags) == 0, "flags": flags, "complexity": complexity}
 
 
+# ── Reverse DCF — what growth does the price imply? ───────────────────────────
+
+def reverse_dcf_growth(
+    price: Optional[float],
+    fcf: Optional[float],
+    shares: Optional[float],
+    discount: float,
+    years: int = 10,
+    terminal_growth: float = 0.025,
+) -> Optional[float]:
+    """Solve for the constant FCF growth rate the current price implies.
+
+    Inverts the single-stage DCF by bisection (it is monotonic increasing in
+    growth). This answers the only honest question for a durable compounder —
+    *what does the market already expect?* — which is far more robust than a
+    forward point estimate that always brands quality names "overvalued".
+
+    Returns None for invalid inputs or when the price lies outside what any
+    growth in [−50%, +60%] can reproduce (i.e. priced beyond any plausible
+    growth). Time O(iterations × years) = O(1) for fixed bounds, Space O(1).
+    """
+    if not price or price <= 0 or not fcf or fcf <= 0 or not shares or shares <= 0:
+        return None
+    if discount <= terminal_growth:
+        return None
+
+    def iv(g: float) -> float:
+        return dcf_intrinsic_value(fcf, shares, g, discount, terminal_growth, years) or 0.0
+
+    lo, hi = -0.50, 0.60
+    if iv(lo) > price or iv(hi) < price:
+        return None
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if iv(mid) < price:
+            lo = mid
+        else:
+            hi = mid
+    return round((lo + hi) / 2, 4)
+
+
 # ── Actionable verdict ────────────────────────────────────────────────────────
 
 def valuation_verdict(
     price: Optional[float],
-    methods: dict,
+    fair_low: Optional[float],
+    fair_base: Optional[float],
+    fair_high: Optional[float],
+    floor: Optional[float] = None,
+    implied_growth: Optional[float] = None,
+    reference_growth: Optional[float] = None,
     required_mos: float = 0.30,
     coc: Optional[dict] = None,
     lynch: Optional[dict] = None,
 ) -> dict:
-    """Blend the intrinsic-value methods into one margin-of-safety signal.
+    """Position price against a GROWTH-AWARE fair-value range — not a blend of
+    conservative floors.
 
-    Uses the MEDIAN intrinsic value (robust to a single outlier model) and
-    reports how many independent methods corroborate undervaluation, so the user
-    sees a decision *and* its evidence rather than four disconnected gauges.
+    Equal-weighting Graham/EPV (no-growth, asset-based floors) with a growth DCF
+    medians a *floor* as if it were a *fair value*, which structurally labels
+    durable compounders "overvalued". Here the DCF range (bear/base/bull) is the
+    spine; `floor` (EPV) is reported as downside context only; and a reverse-DCF
+    `implied_growth` decides whether a premium price is "priced for (plausible)
+    growth" or genuinely "expensive".
 
-    Signal tiers (Graham's margin-of-safety doctrine, default 30%):
-      BUY         — MoS ≥ required
-      ACCUMULATE  — 0 ≤ MoS < required
-      HOLD / REVIEW — −15% ≤ MoS < 0
-      OVERVALUED  — MoS < −15%
+    Tiers (deliberately calm — red is reserved for the rare true extreme):
+      Undervalued  — price ≤ conservative case with ≥ required margin (green)
+      Below fair value — price ≤ conservative case, smaller margin (green)
+      Fairly valued — price within [low, high]                     (neutral)
+      Premium — above the range but implied growth is plausible     (amber)
+      Expensive — above the range, no plausible growth justifies it (red)
 
-    Confidence follows Munger's "know what you don't know": downgraded when the
-    methods disagree widely, when the business is outside a clear circle of
-    competence, or when it is cyclical (today's earnings may be at a peak).
-
-    `methods` maps a label to an intrinsic value (None / ≤ 0 are ignored).
-    None-safe. Time O(k log k) for the median, Space O(k).
+    None-safe. Time O(1), Space O(1).
     """
-    usable = {k: v for k, v in methods.items() if v and v > 0}
-    if not price or price <= 0 or not usable:
+    if not price or price <= 0 or not fair_base or fair_base <= 0:
         return {
             "signal": "INSUFFICIENT DATA", "tone": "neutral",
-            "blended_iv": None, "blended_mos": None, "required_mos": required_mos,
-            "confidence": "Low", "agreement": "no usable valuation models",
-            "methods": {}, "caveats": [],
+            "fair_low": fair_low, "fair_base": fair_base, "fair_high": fair_high,
+            "floor": floor, "price": price, "mos": None, "required_mos": required_mos,
+            "implied_growth": implied_growth, "reference_growth": reference_growth,
+            "confidence": "Low", "caveats": [],
+            "rationale": "Not enough data to estimate a fair value.",
         }
 
-    ivs = sorted(usable.values())
-    n = len(ivs)
-    median = ivs[n // 2] if n % 2 else (ivs[n // 2 - 1] + ivs[n // 2]) / 2
-    mos = (median - price) / median
-    bullish = sum(1 for v in usable.values() if v > price)
-    per_method = {
-        k: {"iv": round(v, 2), "mos": round((v - price) / v, 4)}
-        for k, v in usable.items()
-    }
+    lo = fair_low if (fair_low and fair_low > 0) else fair_base
+    hi = fair_high if (fair_high and fair_high > 0) else fair_base
+    mos = (fair_base - price) / fair_base   # vs the central growth-aware estimate
 
-    if mos >= required_mos:
-        signal, tone = "BUY", "pass"
-    elif mos >= 0:
-        signal, tone = "ACCUMULATE", "watch"
-    elif mos >= -0.15:
-        signal, tone = "HOLD / REVIEW", "watch"
+    if price <= lo:
+        if mos >= required_mos:
+            signal, tone = "Undervalued", "pass"
+            rationale = "Trades below even the conservative growth case with a margin of safety."
+        else:
+            signal, tone = "Below fair value", "pass"
+            rationale = "Trades below the conservative growth case, but under your required margin."
+    elif price <= hi:
+        signal, tone = "Fairly valued", "neutral"
+        rationale = "Price sits inside the growth-aware fair-value range."
     else:
-        signal, tone = "OVERVALUED", "fail"
+        if implied_growth is None:
+            signal, tone = "Expensive", "fail"
+            rationale = "Price is above the optimistic case and beyond any plausible growth rate."
+        elif reference_growth is not None and implied_growth > max(reference_growth, 0.0) + 0.08:
+            signal, tone = "Priced for high growth", "watch"
+            rationale = (
+                f"Price implies ~{implied_growth * 100:.0f}%/yr growth vs ~"
+                f"{reference_growth * 100:.0f}% delivered — demanding."
+            )
+        else:
+            signal, tone = "Premium — priced for growth", "watch"
+            rationale = "Above the fair-value range, but the implied growth is plausible for a quality business."
 
-    dispersion = (ivs[-1] - ivs[0]) / median if median else 0.0
-    confidence = "High"
+    width = (hi - lo) / fair_base if fair_base else 0.0
+    confidence = "High" if width <= 0.5 else "Medium" if width <= 1.0 else "Low"
     caveats: list[str] = []
-    if dispersion > 0.6:
-        confidence = "Medium"
-        caveats.append(
-            f"Valuation methods disagree widely (±{dispersion / 2 * 100:.0f}% around "
-            "the median) — the intrinsic value is uncertain."
-        )
+    if width > 1.0:
+        caveats.append("Wide fair-value range — the inputs are uncertain; lean on the downside floor.")
     if coc and not coc.get("within", True):
         confidence = "Low"
-        caveats.append(
-            "Outside a clear circle of competence — treat the intrinsic value with "
-            "extra caution."
-        )
+        caveats.append("Outside a clear circle of competence — treat the estimate with extra caution.")
     if lynch and lynch.get("category") == "Cyclical":
-        caveats.append(
-            "Cyclical business: today's earnings may be near a peak, so judge on "
-            "mid-cycle earnings rather than the latest year."
-        )
+        caveats.append("Cyclical business: judge on mid-cycle earnings, not the latest year.")
         if confidence == "High":
             confidence = "Medium"
 
     return {
         "signal": signal, "tone": tone,
-        "blended_iv": round(median, 2), "blended_mos": round(mos, 4),
-        "required_mos": required_mos, "confidence": confidence,
-        "agreement": f"{bullish} of {n} methods see upside",
-        "methods": per_method, "caveats": caveats,
+        "fair_low": round(lo, 2), "fair_base": round(fair_base, 2), "fair_high": round(hi, 2),
+        "floor": round(floor, 2) if floor else None,
+        "price": round(price, 2), "mos": round(mos, 4), "required_mos": required_mos,
+        "implied_growth": implied_growth, "reference_growth": reference_growth,
+        "confidence": confidence, "caveats": caveats, "rationale": rationale,
     }
 
 
@@ -355,9 +402,12 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
 
     coc = circle_of_competence_check(quote)
     lynch = classify_lynch(quote, data)
+    implied_growth = reverse_dcf_growth(price, fcf, shares, discount)
     verdict = valuation_verdict(
         price,
-        {"Graham": graham, "DCF (base)": dcf_base, "FCF yield": fcf_val, "EPV": epv},
+        fair_low=dcf_range["bear"], fair_base=dcf_base, fair_high=dcf_range["bull"],
+        floor=epv,
+        implied_growth=implied_growth, reference_growth=default_growth,
         coc=coc, lynch=lynch,
     )
 

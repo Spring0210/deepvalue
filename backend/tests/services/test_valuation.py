@@ -18,6 +18,7 @@ from app.services.valuation import (
     fcf_yield_value,
     graham_number,
     margin_of_safety,
+    reverse_dcf_growth,
     valuation_verdict,
 )
 
@@ -159,48 +160,66 @@ def test_dcf_range_none_safe_on_missing_inputs():
     assert dcf_valuation_range(None, 1e9, 0.10, 0.10) == {"bear": None, "base": None, "bull": None}
 
 
+# ── reverse_dcf_growth ────────────────────────────────────────────────────────
+
+def test_reverse_dcf_recovers_the_growth_that_made_the_price():
+    disc = 0.10
+    price = dcf_intrinsic_value(10e9, 1e9, growth_rate=0.10, discount_rate=disc, terminal_growth=0.025)
+    g = reverse_dcf_growth(price, 10e9, 1e9, disc, terminal_growth=0.025)
+    assert g is not None and abs(g - 0.10) < 0.005
+
+
+def test_reverse_dcf_higher_price_implies_higher_growth():
+    disc = 0.10
+    low  = reverse_dcf_growth(120.0, 10e9, 1e9, disc)
+    high = reverse_dcf_growth(180.0, 10e9, 1e9, disc)
+    assert low is not None and high is not None and high > low
+
+
+def test_reverse_dcf_none_on_bad_inputs():
+    assert reverse_dcf_growth(0, 10e9, 1e9, 0.10) is None
+    assert reverse_dcf_growth(100.0, None, 1e9, 0.10) is None
+    assert reverse_dcf_growth(100.0, 10e9, 0, 0.10) is None
+
+
 # ── valuation_verdict ─────────────────────────────────────────────────────────
 
-def test_verdict_buy_when_price_clears_required_margin():
-    # Methods [90,100,110] → median 100; price 70 → MoS 30% → BUY.
-    out = valuation_verdict(70.0, {"Graham": 90.0, "DCF": 100.0, "EPV": 110.0})
-    assert out["signal"] == "BUY"
-    assert out["tone"] == "pass"
-    assert out["blended_iv"] == 100.0
-    assert abs(out["blended_mos"] - 0.30) < 1e-6
+def test_verdict_undervalued_below_conservative_case():
+    out = valuation_verdict(70.0, fair_low=110.0, fair_base=130.0, fair_high=160.0)
+    assert out["signal"] == "Undervalued" and out["tone"] == "pass"
 
 
-def test_verdict_accumulate_when_modestly_undervalued():
-    out = valuation_verdict(95.0, {"A": 100.0, "B": 100.0})
-    assert out["signal"] == "ACCUMULATE"
+def test_verdict_fairly_valued_within_range_is_neutral():
+    out = valuation_verdict(130.0, fair_low=110.0, fair_base=130.0, fair_high=160.0)
+    assert out["signal"] == "Fairly valued" and out["tone"] == "neutral"
 
 
-def test_verdict_overvalued_when_price_far_above_iv():
-    out = valuation_verdict(200.0, {"A": 100.0, "B": 110.0})
-    assert out["signal"] == "OVERVALUED"
-    assert out["tone"] == "fail"
+def test_verdict_premium_when_above_range_but_growth_plausible():
+    out = valuation_verdict(200.0, fair_low=110.0, fair_base=130.0, fair_high=160.0,
+                            implied_growth=0.10, reference_growth=0.08)
+    assert out["tone"] == "watch"
+    assert "growth" in out["signal"].lower()
 
 
-def test_verdict_insufficient_data_without_usable_ivs():
-    out = valuation_verdict(100.0, {"A": None, "B": -5.0})
+def test_verdict_expensive_only_when_no_plausible_growth_justifies_price():
+    out = valuation_verdict(500.0, fair_low=110.0, fair_base=130.0, fair_high=160.0,
+                            implied_growth=None, reference_growth=0.08)
+    assert out["signal"] == "Expensive" and out["tone"] == "fail"
+
+
+def test_verdict_insufficient_without_fair_base():
+    out = valuation_verdict(100.0, fair_low=None, fair_base=None, fair_high=None)
     assert out["signal"] == "INSUFFICIENT DATA"
-    assert out["blended_iv"] is None
-
-
-def test_verdict_counts_method_agreement():
-    # 100>95 and 120>95 see upside; 90<95 does not → 2 of 3.
-    out = valuation_verdict(95.0, {"A": 100.0, "B": 90.0, "C": 120.0})
-    assert out["agreement"].startswith("2 of 3")
 
 
 def test_verdict_low_confidence_outside_circle_of_competence():
-    out = valuation_verdict(70.0, {"A": 100.0}, coc={"within": False, "flags": ["x"]})
+    out = valuation_verdict(70.0, 110.0, 130.0, 160.0, coc={"within": False, "flags": ["x"]})
     assert out["confidence"] == "Low"
     assert any("circle of competence" in c.lower() for c in out["caveats"])
 
 
 def test_verdict_flags_cyclical_peak_earnings_caveat():
-    out = valuation_verdict(70.0, {"A": 100.0, "B": 105.0}, lynch={"category": "Cyclical"})
+    out = valuation_verdict(120.0, 110.0, 130.0, 160.0, lynch={"category": "Cyclical"})
     assert any("cyclical" in c.lower() for c in out["caveats"])
 
 
@@ -270,7 +289,8 @@ def test_compute_valuation_exposes_capm_discount_and_dcf_range():
 def test_compute_valuation_includes_verdict():
     out = compute_valuation(_quote())
     assert "verdict" in out
-    assert "signal" in out["verdict"] and "blended_mos" in out["verdict"]
+    v = out["verdict"]
+    assert "signal" in v and "mos" in v and "fair_base" in v
 
 
 def test_compute_valuation_with_financials_populates_epv_and_roic():
