@@ -13,6 +13,23 @@ const LYNCH_COLORS: Record<string, string> = {
   'Asset Play':   '#BF5AF2',
 }
 
+// Muted tints + saturated text (Apple/Stripe), never solid fills.
+const VERDICT_TONE: Record<string, { fg: string; bg: string }> = {
+  pass:    { fg: '#34D399', bg: 'rgba(52,211,153,0.12)' },
+  watch:   { fg: '#FBBF24', bg: 'rgba(251,191,36,0.12)' },
+  fail:    { fg: '#F87171', bg: 'rgba(248,113,113,0.12)' },
+  neutral: { fg: '#9CA3AF', bg: 'rgba(156,163,175,0.10)' },
+}
+
+// Mirror the backend tiering so the margin-of-safety slider updates the call live.
+function signalFor(mos: number | null, required: number): { label: string; tone: keyof typeof VERDICT_TONE } {
+  if (mos === null) return { label: 'Insufficient data', tone: 'neutral' }
+  if (mos >= required) return { label: 'Buy', tone: 'pass' }
+  if (mos >= 0)        return { label: 'Accumulate', tone: 'watch' }
+  if (mos >= -0.15)    return { label: 'Hold / review', tone: 'watch' }
+  return { label: 'Overvalued', tone: 'fail' }
+}
+
 // ── DCF math (mirrors backend, runs on frontend for live slider updates) ────
 function calcDCF(
   fcf: number | null,
@@ -171,6 +188,80 @@ function StatCell({ label, value, sub }: { label: string; value: string; sub?: s
   )
 }
 
+// ── Verdict hero — the one actionable answer ─────────────────────────────────
+function VerdictHero({ v, price, sym, required, onRequired }: {
+  v: NonNullable<ReturnType<typeof useStock>['valuation']>['verdict']
+  price: number | null
+  sym: string
+  required: number
+  onRequired: (n: number) => void
+}) {
+  if (!v || v.blended_iv === null || price === null) return null
+  const mos = (v.blended_iv - price) / v.blended_iv
+  const sig = signalFor(mos, required)
+  const t   = VERDICT_TONE[sig.tone]
+  const progress = Math.max(0, Math.min(1, mos / Math.max(required, 1e-4)))
+
+  return (
+    <div className="rounded-2xl p-5" style={{ background: '#1C1C1E', border: '1px solid rgba(255,255,255,0.07)' }}>
+      <p className="text-[10px] uppercase tracking-wider mb-3" style={{ color: 'rgba(235,235,245,0.35)' }}>
+        Verdict · margin of safety
+      </p>
+
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+        <div>
+          <div className="text-4xl font-bold tabular-nums" style={{ color: t.fg }}>{sig.label}</div>
+          <p className="text-[12px] mt-1" style={{ color: 'rgba(235,235,245,0.45)' }}>{v.agreement}</p>
+        </div>
+        <div className="flex gap-5 ml-auto text-right">
+          {[
+            { k: 'Blended value', val: `${sym}${v.blended_iv.toFixed(2)}`, color: 'rgba(235,235,245,0.8)' },
+            { k: 'Price',         val: `${sym}${price.toFixed(2)}`,        color: 'rgba(235,235,245,0.8)' },
+            { k: 'Margin',        val: `${mos >= 0 ? '+' : ''}${(mos * 100).toFixed(1)}%`, color: t.fg },
+          ].map(s => (
+            <div key={s.k}>
+              <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(235,235,245,0.3)' }}>{s.k}</p>
+              <p className="text-lg font-semibold font-mono tabular-nums" style={{ color: s.color }}>{s.val}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${progress * 100}%`, background: t.fg }} />
+      </div>
+
+      <div className="mt-4">
+        <div className="flex justify-between mb-1">
+          <span className="text-[11px]" style={{ color: 'rgba(235,235,245,0.5)' }}>Required margin of safety</span>
+          <span className="text-[11px] font-mono font-semibold" style={{ color: '#0A84FF' }}>{(required * 100).toFixed(0)}%</span>
+        </div>
+        <input
+          type="range" min={0} max={0.6} step={0.05} value={required}
+          onChange={e => onRequired(parseFloat(e.target.value))}
+          className="w-full h-1 rounded-full appearance-none cursor-pointer"
+          style={{ accentColor: '#0A84FF', background: `linear-gradient(90deg, #0A84FF ${(required / 0.6) * 100}%, rgba(255,255,255,0.1) 0%)` }}
+        />
+      </div>
+
+      <div className="mt-3">
+        <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: t.bg, color: t.fg }}>
+          Confidence: {v.confidence}
+        </span>
+      </div>
+
+      {v.caveats.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {v.caveats.map((c, i) => (
+            <li key={i} className="text-[11px] leading-relaxed" style={{ color: 'rgba(235,235,245,0.5)' }}>⚠ {c}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function ValuationPanel() {
   const { valuation, quote } = useStock()
@@ -182,6 +273,7 @@ export default function ValuationPanel() {
   const [discount,      setDiscount]      = useState(capmDiscount)
   const [terminal,      setTerminal]      = useState(0.03)
   const [requiredYield, setRequiredYield] = useState(0.07)
+  const [requiredMos,   setRequiredMos]   = useState(valuation?.verdict?.required_mos ?? 0.30)
 
   const price  = valuation?.current_price ?? quote?.price ?? null
   const graham = valuation?.graham ?? null
@@ -214,6 +306,9 @@ export default function ValuationPanel() {
 
   return (
     <div className="space-y-4">
+
+      {/* Verdict — the single actionable answer */}
+      <VerdictHero v={valuation.verdict} price={price} sym={sym} required={requiredMos} onRequired={setRequiredMos} />
 
       {/* Circle of Competence warning */}
       {coc && !coc.within && (

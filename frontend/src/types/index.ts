@@ -57,7 +57,20 @@ export interface StockQuote {
   currency?: string | null
 }
 
+export interface ValuationVerdict {
+  signal: string
+  tone: 'pass' | 'watch' | 'fail' | 'neutral'
+  blended_iv: number | null
+  blended_mos: number | null
+  required_mos: number
+  confidence: string
+  agreement: string
+  methods: Record<string, { iv: number; mos: number }>
+  caveats: string[]
+}
+
 export interface StockValuation {
+  verdict: ValuationVerdict | null
   graham: number | null
   dcf_base: number | null
   dcf_bear: number | null
