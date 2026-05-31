@@ -195,6 +195,12 @@ def test_wacc_lowered_by_cheap_after_tax_debt():
     assert w < capm_discount_rate(1.0)
 
 
+def test_wacc_floored_at_minimum():
+    # Low-beta, debt-free name: cost of equity is ~6% but WACC is floored at 7%
+    # so the Gordon terminal value can't explode.
+    assert compute_wacc(0.0, equity=100e9, debt=0, interest_expense=0, tax_rate=0.21) >= 0.07
+
+
 def test_two_stage_dcf_positive_when_roic_beats_wacc():
     iv = two_stage_dcf(base_cf=10e9, shares=1e9, wacc=0.09, roic=0.20, g1=0.10)
     assert iv is not None and iv > 0

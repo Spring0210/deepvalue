@@ -51,6 +51,22 @@ def test_cyclical_sector_overrides_growth_buckets():
     assert out["category"] == "Cyclical"
 
 
+def test_semiconductor_is_cyclical_by_industry():
+    # yfinance puts semis under sector "Technology"; the cyclical signal is the
+    # industry. A peak-earnings growth print must not flip it to Fast Grower.
+    out = classify_lynch(_quote(sector="Technology", industry="Semiconductors",
+                                earningsGrowth=0.80, marketCap=100e9))
+    assert out["category"] == "Cyclical"
+
+
+def test_implausible_earnings_print_falls_back_to_revenue_growth():
+    # A 160% earnings print (one-off recovery) must not classify a utility as a
+    # Fast Grower; fall back to the 5% revenue growth → Slow Grower.
+    out = classify_lynch(_quote(sector="Utilities", earningsGrowth=1.6,
+                                revenueGrowth=0.05, marketCap=2e11, dividendYield=0.029))
+    assert out["category"] == "Slow Grower"
+
+
 def test_asset_play_on_large_net_cash():
     # Net cash (cash − debt) is a big fraction of market cap → hidden asset value.
     data = {

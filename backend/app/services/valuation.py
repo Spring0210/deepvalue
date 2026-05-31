@@ -61,6 +61,11 @@ RISK_FREE = 0.043
 EQUITY_RISK_PREMIUM = 0.05
 _DISCOUNT_MIN = 0.06
 _DISCOUNT_MAX = 0.16
+# Minimum cost of capital for discounting. Below this the Gordon terminal value
+# explodes (a 5% discount on a grower implies a 40×+ terminal multiple), which
+# produced absurd fair values (KO ~$330, bull cases > $1000). 7% keeps the
+# terminal multiple sane and guards low-beta defensives.
+_WACC_FLOOR = 0.07
 
 
 def capm_discount_rate(
@@ -161,18 +166,22 @@ def compute_wacc(
 ) -> float:
     """WACC = wE·Re + wD·Rd·(1−tax). Re via CAPM, Rd ≈ interest / debt.
 
-    Fallbacks: no/zero debt → WACC = Re; bad Rd clamped ≤ 15%; missing tax → 21%.
-    Time O(1), Space O(1).
+    `equity` must be the MARKET value of equity (market cap), not book equity —
+    weighting by book equity collapses the WACC for buyback-heavy names whose
+    book equity is tiny (the same distortion that breaks the Graham number).
+
+    Floored at _WACC_FLOOR. Fallbacks: no/zero debt → Re; bad Rd clamped ≤ 15%;
+    missing tax → 21%. Time O(1), Space O(1).
     """
     re = capm_discount_rate(beta, risk_free, erp)
     if not debt or debt <= 0:
-        return re
+        return max(re, _WACC_FLOOR)
     rd = min(abs(interest_expense) / debt, 0.15) if interest_expense else 0.05
     t = tax_rate if (tax_rate is not None and 0 <= tax_rate < 1) else 0.21
     v = (equity or 0) + debt
     if v <= 0:
-        return re
-    return round((equity or 0) / v * re + debt / v * rd * (1 - t), 4)
+        return max(re, _WACC_FLOOR)
+    return round(max((equity or 0) / v * re + debt / v * rd * (1 - t), _WACC_FLOOR), 4)
 
 
 def two_stage_dcf(
@@ -235,7 +244,7 @@ def owner_earnings_dcf_range(
     higher WACC; bull = higher growth + lower WACC. Time O(1), Space O(1)."""
     if not oe or oe <= 0 or not shares or shares <= 0:
         return {"bear": None, "base": None, "bull": None}
-    bull_wacc = max(g_terminal + 0.01, wacc - 0.02)
+    bull_wacc = max(_WACC_FLOOR, wacc - 0.02)   # never discount below the floor
     return {
         "bear": two_stage_dcf(oe, shares, wacc + 0.02, roic, max(0.0, g1 - 0.04), n1, g_terminal, fade_years),
         "base": two_stage_dcf(oe, shares, wacc, roic, g1, n1, g_terminal, fade_years),
@@ -701,7 +710,8 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
 
         epv  = earnings_power_value(nopat, shares, discount_rate=discount)
         roic = compute_roic(op_income, tax_rate, total_debt, total_equity, cash)
-        wacc = compute_wacc(beta, total_equity, total_debt, interest, tax_rate)
+        # WACC weights by MARKET equity (market cap), not book equity.
+        wacc = compute_wacc(beta, mktcap, total_debt, interest, tax_rate)
         oe   = owner_earnings(net_income, dep_amort, capex)
         owner_range = owner_earnings_dcf_range(oe, shares, wacc, roic, default_growth)
 

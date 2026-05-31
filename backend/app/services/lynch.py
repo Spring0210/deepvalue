@@ -14,10 +14,25 @@ _CYCLICAL_SECTORS = {
     "Consumer Cyclical", "Consumer Discretionary",
 }
 
+# Cyclical industries that yfinance files under non-cyclical sectors — most
+# importantly semiconductors, which sit under "Technology".
+_CYCLICAL_INDUSTRIES = (
+    "semiconductor", "auto", "steel", "airline", "oil", "gas", "mining",
+    "shipping", "homebuild", "chemical", "metal",
+)
+
 _FAST_GROWTH = 0.20     # ≥ 20% earnings growth = fast grower
 _STALWART_GROWTH = 0.08  # 8–20% with size = stalwart
 _LARGE_CAP = 10e9
 _ASSET_PLAY_NET_CASH = 0.30  # net cash ≥ 30% of market cap = hidden asset value
+_MAX_PLAUSIBLE_GROWTH = 1.0  # earnings prints above 100% are one-offs, not a rate
+
+
+def _is_cyclical(sector: str, industry: str) -> bool:
+    if sector in _CYCLICAL_SECTORS:
+        return True
+    ind = (industry or "").lower()
+    return any(word in ind for word in _CYCLICAL_INDUSTRIES)
 
 
 def _latest(statement: dict, field: str) -> Optional[float]:
@@ -42,13 +57,16 @@ def _net_cash_ratio(quote: dict, data: Optional[dict]) -> Optional[float]:
 
 def _growth(quote: dict) -> float:
     g = quote.get("earningsGrowth")
-    if g is None:
+    # A one-off earnings print (e.g. a 160% recovery year) is not a growth rate —
+    # fall back to revenue growth so it doesn't misclassify the business.
+    if g is None or abs(g) > _MAX_PLAUSIBLE_GROWTH:
         g = quote.get("revenueGrowth")
     return g if g is not None else 0.0
 
 
 def classify_lynch(quote: dict, data: Optional[dict] = None) -> dict:
-    sector  = quote.get("sector", "") or ""
+    sector   = quote.get("sector", "") or ""
+    industry = quote.get("industry", "") or ""
     eps     = quote.get("trailingEps")
     mktcap  = quote.get("marketCap") or 0.0
     yield_  = quote.get("dividendYield") or 0.0
@@ -77,9 +95,9 @@ def classify_lynch(quote: dict, data: Optional[dict] = None) -> dict:
         yardstick = "Value the hidden assets (net cash, real estate, stakes) vs market cap, not the P/E."
         verdict = "Worth a sum-of-the-parts look; the market may be ignoring the balance sheet."
 
-    elif sector in _CYCLICAL_SECTORS:
+    elif _is_cyclical(sector, industry):
         category = "Cyclical"
-        rationale = f"{sector} earnings rise and fall with the economic cycle."
+        rationale = f"{industry or sector} earnings rise and fall with the economic cycle."
         yardstick = "Beware the P/E trap: a low P/E on peak earnings is the danger, not the bargain."
         verdict = "Time it to the cycle; judge on through-cycle earnings, not the latest quarter."
 

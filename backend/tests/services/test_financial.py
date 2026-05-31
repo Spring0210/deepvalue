@@ -7,7 +7,15 @@ inputs injected), with the annual columns kept behind it for trend depth."""
 
 from __future__ import annotations
 
-from app.services.financial import build_ttm_data
+from app.services.financial import _normalize_dividend_yield, build_ttm_data
+
+
+def test_dividend_yield_percent_normalized_to_fraction():
+    # yfinance now returns the yield in percent (2.68 = 2.68%); the rest of the
+    # app assumes a fraction, so normalize at the data layer.
+    assert abs(_normalize_dividend_yield(2.68) - 0.0268) < 1e-9
+    assert abs(_normalize_dividend_yield(0.35) - 0.0035) < 1e-9
+    assert _normalize_dividend_yield(None) is None
 
 
 def _annual():

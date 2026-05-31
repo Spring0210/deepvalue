@@ -25,6 +25,15 @@ _EQUITY_FIELDS = (
 )
 
 
+def _normalize_dividend_yield(raw: Optional[float]) -> Optional[float]:
+    """yfinance returns the dividend yield in percent (e.g. 2.68 = 2.68%); the
+    rest of the app treats it as a fraction. Normalize to a fraction so PEG/PEGY,
+    the moat score, and the overview display are all consistent."""
+    if raw is None:
+        return None
+    return raw / 100
+
+
 def _df_to_dict(df: pd.DataFrame) -> dict:
     """Convert yfinance DataFrame (index=fields, columns=dates) to {date_str: {field: value}}."""
     result: dict = {}
@@ -77,7 +86,7 @@ def _fetch_quote_sync(ticker: str) -> dict:
         "earningsGrowth":    info.get("earningsGrowth"),
         "fcfYield":          fcf_yield,
         "freeCashflow":      fcf,
-        "dividendYield":     info.get("dividendYield"),
+        "dividendYield":     _normalize_dividend_yield(info.get("dividendYield")),
         "grossMargins":      info.get("grossMargins"),
         "operatingMargins":  info.get("operatingMargins"),
         "evToEbitda":        info.get("enterpriseToEbitda"),
