@@ -3,6 +3,16 @@ import { useStock } from '../../context/StockContext'
 import MoatCard from './MoatCard'
 import { getCurrencySymbol } from '../../utils/currency'
 
+// Lynch's six categories, each with a distinct accent colour.
+const LYNCH_COLORS: Record<string, string> = {
+  'Fast Grower':  '#30D158',
+  'Stalwart':     '#5AC8F5',
+  'Slow Grower':  '#8E8E93',
+  'Cyclical':     '#FF9F0A',
+  'Turnaround':   '#FF453A',
+  'Asset Play':   '#BF5AF2',
+}
+
 // ── DCF math (mirrors backend, runs on frontend for live slider updates) ────
 function calcDCF(
   fcf: number | null,
@@ -226,6 +236,25 @@ export default function ValuationPanel() {
 
       {/* Competitive Moat */}
       <MoatCard />
+
+      {/* Lynch category */}
+      {valuation.lynch && (
+        <Card title="Lynch Category">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-semibold px-2 py-0.5 rounded-md"
+              style={{ background: `${LYNCH_COLORS[valuation.lynch.category] ?? '#5AC8F5'}22`, color: LYNCH_COLORS[valuation.lynch.category] ?? '#5AC8F5' }}>
+              {valuation.lynch.category}
+            </span>
+            <span className="text-[11px]" style={{ color: 'rgba(235,235,245,0.5)' }}>{valuation.lynch.rationale}</span>
+          </div>
+          <p className="text-[11px] leading-relaxed mb-1" style={{ color: 'rgba(235,235,245,0.5)' }}>
+            <span style={{ color: 'rgba(235,235,245,0.35)' }}>Yardstick: </span>{valuation.lynch.yardstick}
+          </p>
+          <p className="text-[11px] leading-relaxed font-medium" style={{ color: 'rgba(235,235,245,0.7)' }}>
+            {valuation.lynch.verdict}
+          </p>
+        </Card>
+      )}
 
       {/* ROIC + P/FCF row */}
       {(valuation.roic != null || valuation.price_to_fcf != null) && (

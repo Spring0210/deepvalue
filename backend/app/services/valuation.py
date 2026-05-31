@@ -1,6 +1,8 @@
 import math
 from typing import Optional
 
+from app.services.lynch import classify_lynch
+
 
 # ── Shared helper ─────────────────────────────────────────────────────────────
 
@@ -249,6 +251,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         roic = compute_roic(op_income, tax_rate, total_debt, total_equity, cash)
 
     coc = circle_of_competence_check(quote)
+    lynch = classify_lynch(quote, data)
 
     return {
         "graham":            round(graham, 2) if graham else None,
@@ -267,6 +270,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         "roic":              roic,
         "price_to_fcf":      p_fcf,
         "circle_of_competence": coc,
+        "lynch":             lynch,
         "inputs": {
             "eps":            eps,
             "bvps":           bvps,

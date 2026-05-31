@@ -78,6 +78,18 @@ export interface StockValuation {
     flags: string[]
     complexity: 'Low' | 'Medium' | 'High'
   } | null
+  lynch: {
+    category: string
+    rationale: string
+    yardstick: string
+    verdict: string
+    metrics: {
+      growth: number | null
+      peg: number | null
+      dividend_yield: number | null
+      net_cash_ratio: number | null
+    }
+  } | null
   inputs: {
     eps: number | null
     bvps: number | null
