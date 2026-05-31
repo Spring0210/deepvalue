@@ -492,6 +492,100 @@ def valuation_verdict(
     }
 
 
+# ── Archetype routing — match the lens to the business ────────────────────────
+
+_METHOD_LABELS = {
+    "owner_dcf":   "Owner-earnings DCF",
+    "reverse_dcf": "Reverse DCF",
+    "graham":      "Graham number",
+    "epv":         "Earnings power value",
+    "fcf_yield":   "FCF yield value",
+    "dcf_fcf":     "FCF DCF",
+}
+
+# Per archetype: method → (tier, reason). No serious investor values a
+# wide-moat compounder, a peak-earnings cyclical, and a turnaround the same way.
+_LENS_TABLE: dict = {
+    "compounder": {
+        "owner_dcf":   ("primary",        "Durable compounder — value its owner earnings and growth."),
+        "reverse_dcf": ("primary",        "Test the growth the price implies against the moat."),
+        "epv":         ("secondary",      "No-growth floor — the downside if growth stalls."),
+        "fcf_yield":   ("secondary",      "Cross-check on cash generation."),
+        "dcf_fcf":     ("secondary",      "Interactive sandbox; the owner-earnings DCF is the spine."),
+        "graham":      ("not_applicable", "Asset-light; buybacks distort book value — the Graham number misleads here."),
+    },
+    "cyclical": {
+        "epv":         ("primary",        "Value mid-cycle earnings power, not the peak."),
+        "graham":      ("secondary",      "Asset value is a cycle-resistant anchor."),
+        "owner_dcf":   ("secondary",      "Use normalized mid-cycle earnings, not the latest year."),
+        "reverse_dcf": ("secondary",      "Implied growth off peak earnings can mislead."),
+        "fcf_yield":   ("not_applicable", "Peak-cycle cash flow overstates a sustainable yield."),
+        "dcf_fcf":     ("not_applicable", "Single-year cash flow misleads across the cycle."),
+    },
+    "slow_grower": {
+        "graham":      ("primary",        "Asset/earnings value suits a mature, low-growth business."),
+        "epv":         ("primary",        "Earnings power, with little growth to add."),
+        "fcf_yield":   ("secondary",      "Dividend / cash yield is the core return."),
+        "owner_dcf":   ("secondary",      "Limited growth to capitalize."),
+        "reverse_dcf": ("secondary",      "Modest growth expectations to sanity-check."),
+        "dcf_fcf":     ("secondary",      "Interactive cash-flow sandbox."),
+    },
+    "asset_play": {
+        "graham":      ("primary",        "Value is in the assets — book/asset value is the anchor."),
+        "epv":         ("secondary",      "Earnings power as a secondary check."),
+        "owner_dcf":   ("not_applicable", "Value is in the assets, not the earnings stream."),
+        "reverse_dcf": ("not_applicable", "Earnings growth is not the thesis."),
+        "fcf_yield":   ("not_applicable", "Cash flow isn't where the value sits."),
+        "dcf_fcf":     ("not_applicable", "Cash flow isn't where the value sits."),
+    },
+    "turnaround": {
+        "graham":      ("secondary",      "Asset value — the downside if it survives."),
+        "epv":         ("secondary",      "Only meaningful once earnings normalize."),
+        "owner_dcf":   ("not_applicable", "Earnings aren't normalized — a DCF is speculative."),
+        "reverse_dcf": ("not_applicable", "No stable earnings base to imply growth from."),
+        "fcf_yield":   ("not_applicable", "Cash flow is depressed or negative."),
+        "dcf_fcf":     ("not_applicable", "Cash flow is depressed or negative."),
+    },
+    "general": {
+        "owner_dcf":   ("primary",        "Value the business on its owner earnings and growth."),
+        "epv":         ("secondary",      "No-growth floor."),
+        "fcf_yield":   ("secondary",      "Cross-check on cash generation."),
+        "graham":      ("secondary",      "Conservative asset/earnings anchor."),
+        "reverse_dcf": ("secondary",      "Growth the price implies."),
+        "dcf_fcf":     ("secondary",      "Interactive cash-flow sandbox."),
+    },
+}
+
+
+def _archetype(lynch_category: Optional[str], moat_strength: Optional[str]) -> str:
+    if lynch_category == "Turnaround":
+        return "turnaround"
+    if lynch_category == "Asset Play":
+        return "asset_play"
+    if lynch_category == "Cyclical":
+        return "cyclical"
+    if lynch_category in ("Fast Grower", "Stalwart") or moat_strength == "Wide":
+        return "compounder"
+    if lynch_category == "Slow Grower":
+        return "slow_grower"
+    return "general"
+
+
+def valuation_lenses(lynch_category: Optional[str], moat_strength: Optional[str] = None) -> dict:
+    """Which valuation methods are primary / contextual / not-suited for this
+    business archetype (from the Lynch category, optionally refined by moat).
+
+    Drives the UI to emphasize the right lenses and suppress the wrong ones —
+    e.g. it hides the Graham number for an asset-light compounder (the original
+    Apple bug) and makes asset value primary for an asset play. Time O(1).
+    """
+    table = _LENS_TABLE[_archetype(lynch_category, moat_strength)]
+    return {
+        key: {"label": _METHOD_LABELS[key], "tier": tier, "reason": reason}
+        for key, (tier, reason) in table.items()
+    }
+
+
 # ── Top-level ─────────────────────────────────────────────────────────────────
 
 def compute_valuation(quote: dict, data: dict | None = None) -> dict:
@@ -547,6 +641,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
 
     coc = circle_of_competence_check(quote)
     lynch = classify_lynch(quote, data)
+    lenses = valuation_lenses(lynch.get("category"))
     implied_growth = reverse_dcf_growth(price, fcf, shares, discount)
     decomposition = price_decomposition(price, epv)
 
@@ -572,6 +667,7 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         "owner_earnings_dcf": owner_range,
         "wacc":              wacc,
         "price_decomposition": decomposition,
+        "lenses":            lenses,
         "current_price":     price,
         "discount_rate":     discount,
         "mos_graham":        margin_of_safety(price, graham),

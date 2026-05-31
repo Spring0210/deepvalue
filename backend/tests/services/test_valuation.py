@@ -24,6 +24,7 @@ from app.services.valuation import (
     price_decomposition,
     reverse_dcf_growth,
     two_stage_dcf,
+    valuation_lenses,
     valuation_verdict,
 )
 
@@ -244,6 +245,45 @@ def test_price_decomposition_none_on_bad_inputs():
 def test_compute_valuation_includes_price_decomposition_with_financials():
     out = compute_valuation(_quote(), _financials_fixture())
     assert "price_decomposition" in out
+
+
+# ── valuation_lenses (archetype routing) ──────────────────────────────────────
+
+def test_lenses_suppress_graham_for_compounder():
+    out = valuation_lenses("Fast Grower")
+    assert out["graham"]["tier"] == "not_applicable"
+    assert out["owner_dcf"]["tier"] == "primary"
+
+
+def test_lenses_graham_primary_for_slow_grower():
+    assert valuation_lenses("Slow Grower")["graham"]["tier"] == "primary"
+
+
+def test_lenses_asset_play_disables_earnings_dcf():
+    out = valuation_lenses("Asset Play")
+    assert out["owner_dcf"]["tier"] == "not_applicable"
+    assert out["graham"]["tier"] == "primary"
+
+
+def test_lenses_cyclical_makes_floor_primary():
+    assert valuation_lenses("Cyclical")["epv"]["tier"] == "primary"
+
+
+def test_lenses_wide_moat_promotes_slow_grower_to_compounder():
+    out = valuation_lenses("Slow Grower", moat_strength="Wide")
+    assert out["owner_dcf"]["tier"] == "primary"
+
+
+def test_lenses_every_method_has_tier_label_reason():
+    out = valuation_lenses(None)
+    for m in out.values():
+        assert m["tier"] in {"primary", "secondary", "not_applicable"}
+        assert m["reason"] and m["label"]
+
+
+def test_compute_valuation_includes_lenses():
+    out = compute_valuation(_quote())
+    assert "lenses" in out and "graham" in out["lenses"]
 
 
 # ── reverse_dcf_growth ────────────────────────────────────────────────────────
