@@ -263,6 +263,70 @@ def price_decomposition(price: Optional[float], epv: Optional[float]) -> Optiona
     }
 
 
+# ── Through-cycle earnings (P/E-trap defense) and PEG (Lynch) ─────────────────
+
+def normalized_eps(eps_series: list, years: int = 8) -> Optional[float]:
+    """Mid-cycle EPS = mean of up to `years` annual EPS, for cyclicals.
+
+    Defeats the P/E trap: a cyclical at peak earnings shows a deceptively low
+    P/E right before margins mean-revert (Graham's instruction; the basis of
+    Shiller's CAPE). Drops None years; needs ≥ 3 usable. Time O(n), Space O(n).
+    """
+    clean = [e for e in eps_series[:years] if e is not None]
+    if len(clean) < 3:
+        return None
+    return round(sum(clean) / len(clean), 4)
+
+
+def through_cycle_assessment(
+    price: Optional[float],
+    ttm_eps: Optional[float],
+    eps_series: list,
+    years: int = 8,
+) -> Optional[dict]:
+    """Compare the trailing P/E to a mid-cycle (normalized) P/E. Flags the
+    peak-earnings trap — cheap on TTM, expensive on mid-cycle. Returns None when
+    there isn't enough EPS history. Time O(n), Space O(n).
+    """
+    norm = normalized_eps(eps_series, years)
+    if norm is None or norm <= 0:
+        return None
+    ttm_pe  = (price / ttm_eps) if (price and ttm_eps and ttm_eps > 0) else None
+    norm_pe = (price / norm) if price else None
+    trap = ttm_pe is not None and norm_pe is not None and norm_pe > ttm_pe * 1.5
+    return {
+        "normalized_eps": norm,
+        "ttm_eps": round(ttm_eps, 2) if ttm_eps else None,
+        "ttm_pe": round(ttm_pe, 1) if ttm_pe else None,
+        "normalized_pe": round(norm_pe, 1) if norm_pe else None,
+        "peak_earnings_trap": trap,
+    }
+
+
+def peg_assessment(
+    pe: Optional[float],
+    growth: Optional[float],
+    dividend_yield: Optional[float] = 0.0,
+) -> Optional[dict]:
+    """Lynch PEG and PEGY. PEG = P/E ÷ growth%; PEGY adds the dividend yield to
+    growth. < 1 cheap, 1–2 fair, > 2 expensive. None on invalid inputs.
+    Time O(1), Space O(1).
+    """
+    if not pe or pe <= 0 or not growth or growth <= 0:
+        return None
+    g = growth * 100
+    y = (dividend_yield or 0) * 100
+    peg  = pe / g
+    pegy = pe / (g + y) if (g + y) > 0 else None
+    if peg < 1:
+        label = "Cheap for its growth (PEG < 1)"
+    elif peg <= 2:
+        label = "Fairly priced for growth (PEG 1–2)"
+    else:
+        label = "Expensive for its growth (PEG > 2)"
+    return {"peg": round(peg, 2), "pegy": round(pegy, 2) if pegy else None, "label": label}
+
+
 def fcf_yield_value(
     fcf: Optional[float],
     shares: Optional[float],
@@ -615,11 +679,13 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
     roic = None
     wacc = None
     oe   = None
+    eps_series: list = []
     owner_range = {"bear": None, "base": None, "bull": None}
     if data:
         fin = data.get("financials", {})
         bal = data.get("balanceSheet", {})
         cf  = data.get("cashflow", {})
+        eps_series = [col.get("Basic EPS") for col in list(fin.values())[:8]]
 
         op_income    = _latest(fin, "Operating Income")
         tax_prov     = _latest(fin, "Tax Provision")
@@ -645,6 +711,17 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
     implied_growth = reverse_dcf_growth(price, fcf, shares, discount)
     decomposition = price_decomposition(price, epv)
 
+    # Through-cycle (mid-cycle) earnings only matter for cyclicals (P/E trap).
+    through_cycle = (
+        through_cycle_assessment(price, eps, eps_series)
+        if (eps_series and lynch.get("category") == "Cyclical") else None
+    )
+    peg = peg_assessment(
+        quote.get("pe"),
+        quote.get("earningsGrowth") or quote.get("revenueGrowth"),
+        quote.get("dividendYield"),
+    )
+
     # The two-stage owner-earnings DCF is the credible fair-value spine; fall
     # back to the single-stage FCF range when statement data is unavailable.
     spine = owner_range if owner_range["base"] else dcf_range
@@ -668,6 +745,8 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         "wacc":              wacc,
         "price_decomposition": decomposition,
         "lenses":            lenses,
+        "through_cycle":     through_cycle,
+        "peg":               peg,
         "current_price":     price,
         "discount_rate":     discount,
         "mos_graham":        margin_of_safety(price, graham),

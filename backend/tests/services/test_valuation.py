@@ -19,10 +19,13 @@ from app.services.valuation import (
     fcf_yield_value,
     graham_number,
     margin_of_safety,
+    normalized_eps,
     owner_earnings,
     owner_earnings_dcf_range,
+    peg_assessment,
     price_decomposition,
     reverse_dcf_growth,
+    through_cycle_assessment,
     two_stage_dcf,
     valuation_lenses,
     valuation_verdict,
@@ -245,6 +248,49 @@ def test_price_decomposition_none_on_bad_inputs():
 def test_compute_valuation_includes_price_decomposition_with_financials():
     out = compute_valuation(_quote(), _financials_fixture())
     assert "price_decomposition" in out
+
+
+# ── through-cycle earnings (P/E-trap defense) + PEG ───────────────────────────
+
+def test_normalized_eps_averages_the_cycle():
+    assert normalized_eps([5.0, 4.0, 3.0, 2.0, 1.0]) == 3.0
+
+
+def test_normalized_eps_drops_none_and_needs_three_years():
+    assert normalized_eps([6.0, None, 3.0, 3.0]) == 4.0   # mean of [6,3,3]
+    assert normalized_eps([5.0, None]) is None             # < 3 usable
+
+
+def test_through_cycle_flags_peak_earnings_trap():
+    # TTM EPS 10 is a peak; mid-cycle ~4 → low TTM P/E but high normalized P/E.
+    out = through_cycle_assessment(100.0, 10.0, [10.0, 2.0, 3.0, 4.0, 5.0, 2.0, 3.0, 4.0])
+    assert out is not None
+    assert out["normalized_pe"] > out["ttm_pe"]
+    assert out["peak_earnings_trap"] is True
+
+
+def test_through_cycle_none_without_history():
+    assert through_cycle_assessment(100.0, 10.0, [10.0, None]) is None
+
+
+def test_peg_cheap_when_below_one():
+    out = peg_assessment(pe=15.0, growth=0.20)
+    assert out["peg"] == 0.75 and "Cheap" in out["label"]
+
+
+def test_pegy_adds_dividend_yield_to_growth():
+    out = peg_assessment(pe=20.0, growth=0.05, dividend_yield=0.05)
+    assert out["peg"] == 4.0 and out["pegy"] == 2.0
+
+
+def test_peg_none_on_bad_inputs():
+    assert peg_assessment(0, 0.20) is None
+    assert peg_assessment(15.0, 0) is None
+
+
+def test_compute_valuation_includes_peg():
+    out = compute_valuation(_quote())
+    assert "peg" in out
 
 
 # ── valuation_lenses (archetype routing) ──────────────────────────────────────
