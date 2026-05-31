@@ -182,7 +182,7 @@ def test_roe_metric_present():
         fin=_one_year({"Net Income": 80.0}),
         bal=_one_year({"Common Stock Equity": 400.0}),
     )
-    r = _by_name(compute_ratios(data), "ROE")
+    r = _by_name(compute_ratios(data), "ROE (FY)")
     assert r.value is not None and abs(r.value - 0.20) < 1e-6
     assert r.passes is True
 
@@ -192,13 +192,13 @@ def test_roe_fails_on_negative_equity():
         fin=_one_year({"Net Income": 80.0}),
         bal=_one_year({"Common Stock Equity": -50.0}),
     )
-    r = _by_name(compute_ratios(data), "ROE")
+    r = _by_name(compute_ratios(data), "ROE (FY)")
     assert r.passes is False
 
 
 def test_roe_na_when_equity_missing():
     data = _data(fin=_one_year({"Net Income": 80.0}))
-    r = _by_name(compute_ratios(data), "ROE")
+    r = _by_name(compute_ratios(data), "ROE (FY)")
     assert r.value is None and r.passes is None and r.score is None
 
 

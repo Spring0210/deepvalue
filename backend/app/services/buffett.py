@@ -101,7 +101,7 @@ def _graded(
 _RAMP_METRICS = {
     "Gross Margin", "SG&A Margin", "R&D Margin", "Depreciation Margin",
     "Interest Expense Margin", "Net Profit Margin", "Adj. Debt-to-Equity",
-    "CapEx Margin", "ROIC", "ROE",
+    "CapEx Margin", "ROIC", "ROE (FY)",
 }
 
 
@@ -378,11 +378,13 @@ def compute_ratios(data: dict, sector: str = "") -> list[BuffettRatio]:
         else:
             roe_pass = False   # negative book equity is a red flag, not a high ROE
     ratios.append(BuffettRatio(
-        name="ROE", value=roe, threshold="≥ 15%",
+        name="ROE (FY)", value=roe, threshold="≥ 15%",
         passes=roe_pass,
         score=_graded(roe, "high", 0.15, 0.075, roe_pass),
         equation="Net Income / Total Equity",
-        description="Net profit generated on shareholders' equity.",
+        description="Net profit on shareholders' equity, latest fiscal year. "
+                    "The overview's ROE is Yahoo's trailing-12-month figure, so "
+                    "the two differ for fast-growing companies.",
         buffett_logic="Buffett favours businesses that earn consistently high returns on equity.",
         category="Returns on Capital", weight=0.10,
     ))

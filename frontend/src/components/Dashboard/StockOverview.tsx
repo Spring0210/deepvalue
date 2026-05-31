@@ -317,7 +317,7 @@ export default function StockOverview({ ticker, quote, moat }: Props) {
         <Stat label="PEG Ratio"    value={fmt(quote.pegRatio, 2)} />
         <Stat label="EV/EBITDA"    value={fmt(quote.evToEbitda, 1)} />
         <Stat label="FCF Yield"    value={pct(quote.fcfYield)} />
-        <Stat label="ROE"          value={pct(quote.roe)} />
+        <Stat label="ROE (TTM)"    value={pct(quote.roe)} />
         <Stat label="Rev Growth"   value={pct(quote.revenueGrowth)} />
 
         {/* 52-week range bar — spans full row */}
