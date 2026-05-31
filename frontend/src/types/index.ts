@@ -82,9 +82,16 @@ export interface PriceDecomposition {
   below_no_growth_value: boolean
 }
 
+export interface ValuationLens {
+  tier: 'primary' | 'secondary' | 'not_applicable'
+  reason: string
+  label: string
+}
+
 export interface StockValuation {
   verdict: ValuationVerdict | null
   price_decomposition: PriceDecomposition | null
+  lenses: Record<string, ValuationLens> | null
   graham: number | null
   dcf_base: number | null
   dcf_bear: number | null

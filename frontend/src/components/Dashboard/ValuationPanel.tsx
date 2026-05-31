@@ -132,7 +132,20 @@ function SliderRow({ label, value, min, max, step, format, onChange }: {
 }
 
 // ── Valuation card wrapper ───────────────────────────────────────────────────
-function Card({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
+const LENS_META: Record<string, { label: string; fg: string; bg: string }> = {
+  primary:        { label: 'Primary lens', fg: '#34D399', bg: 'rgba(52,211,153,0.12)' },
+  secondary:      { label: 'Context',      fg: '#9CA3AF', bg: 'rgba(156,163,175,0.10)' },
+  not_applicable: { label: 'Not suited',   fg: '#FBBF24', bg: 'rgba(251,191,36,0.12)' },
+}
+
+function Card({ title, badge, lens, children }: {
+  title: string
+  badge?: string
+  lens?: { tier: string; reason: string }
+  children: React.ReactNode
+}) {
+  const lm    = lens ? LENS_META[lens.tier] : null
+  const muted = lens?.tier === 'not_applicable'
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: '#2C2C2E', border: '1px solid rgba(255,255,255,0.07)' }}>
       <div className="px-4 py-2.5 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
@@ -144,8 +157,18 @@ function Card({ title, badge, children }: { title: string; badge?: string; child
             {badge}
           </span>
         )}
+        {lm && (
+          <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: lm.bg, color: lm.fg }}>
+            {lm.label}
+          </span>
+        )}
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-4">
+        {muted && lens && (
+          <p className="text-[11px] mb-3 leading-relaxed" style={{ color: '#FBBF24' }}>⚠ Not suited here — {lens.reason}</p>
+        )}
+        <div style={muted ? { opacity: 0.4 } : undefined}>{children}</div>
+      </div>
     </div>
   )
 }
@@ -427,7 +450,7 @@ export default function ValuationPanel() {
       </Card>
 
       {/* Graham Number */}
-      <Card title="Graham Number" badge="√(22.5 × EPS × BVPS)">
+      <Card title="Graham Number" badge="√(22.5 × EPS × BVPS)" lens={valuation.lenses?.graham}>
         {graham ? (
           <div className="space-y-3">
             <PriceBar price={price} iv={graham} label="Graham Number vs Market Price" color="#BF5AF2" sym={sym} />
@@ -456,7 +479,7 @@ export default function ValuationPanel() {
       </Card>
 
       {/* DCF Calculator */}
-      <Card title="DCF Calculator" badge="10-Year Discounted Cash Flow">
+      <Card title="DCF Calculator" badge="10-Year Discounted Cash Flow" lens={valuation.lenses?.dcf_fcf}>
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
             <PriceBar price={price} iv={dcfLive} label="DCF Intrinsic Value vs Market Price" color="#5AC8F5" sym={sym} />
@@ -516,7 +539,7 @@ export default function ValuationPanel() {
       </Card>
 
       {/* FCF Yield Valuation */}
-      <Card title="FCF Yield Valuation" badge="FCF/Share ÷ Required Yield">
+      <Card title="FCF Yield Valuation" badge="FCF/Share ÷ Required Yield" lens={valuation.lenses?.fcf_yield}>
         {valuation.inputs.fcf && valuation.inputs.shares ? (
           <div className="space-y-4">
             <PriceBar price={price} iv={fcfYieldLive} label="FCF Yield Fair Value vs Market Price" color="#30D158" sym={sym} />
@@ -545,7 +568,7 @@ export default function ValuationPanel() {
       </Card>
 
       {/* EPV */}
-      <Card title="Earnings Power Value" badge="Greenwald No-Growth DCF">
+      <Card title="Earnings Power Value" badge="Greenwald No-Growth DCF" lens={valuation.lenses?.epv}>
         {valuation.epv != null ? (
           <div className="space-y-3">
             <PriceBar price={price} iv={valuation.epv} label="EPV vs Market Price" color="#FF9F0A" sym={sym} />
