@@ -18,6 +18,7 @@ from app.services.valuation import (
     fcf_yield_value,
     graham_number,
     margin_of_safety,
+    valuation_verdict,
 )
 
 
@@ -158,6 +159,51 @@ def test_dcf_range_none_safe_on_missing_inputs():
     assert dcf_valuation_range(None, 1e9, 0.10, 0.10) == {"bear": None, "base": None, "bull": None}
 
 
+# ── valuation_verdict ─────────────────────────────────────────────────────────
+
+def test_verdict_buy_when_price_clears_required_margin():
+    # Methods [90,100,110] → median 100; price 70 → MoS 30% → BUY.
+    out = valuation_verdict(70.0, {"Graham": 90.0, "DCF": 100.0, "EPV": 110.0})
+    assert out["signal"] == "BUY"
+    assert out["tone"] == "pass"
+    assert out["blended_iv"] == 100.0
+    assert abs(out["blended_mos"] - 0.30) < 1e-6
+
+
+def test_verdict_accumulate_when_modestly_undervalued():
+    out = valuation_verdict(95.0, {"A": 100.0, "B": 100.0})
+    assert out["signal"] == "ACCUMULATE"
+
+
+def test_verdict_overvalued_when_price_far_above_iv():
+    out = valuation_verdict(200.0, {"A": 100.0, "B": 110.0})
+    assert out["signal"] == "OVERVALUED"
+    assert out["tone"] == "fail"
+
+
+def test_verdict_insufficient_data_without_usable_ivs():
+    out = valuation_verdict(100.0, {"A": None, "B": -5.0})
+    assert out["signal"] == "INSUFFICIENT DATA"
+    assert out["blended_iv"] is None
+
+
+def test_verdict_counts_method_agreement():
+    # 100>95 and 120>95 see upside; 90<95 does not → 2 of 3.
+    out = valuation_verdict(95.0, {"A": 100.0, "B": 90.0, "C": 120.0})
+    assert out["agreement"].startswith("2 of 3")
+
+
+def test_verdict_low_confidence_outside_circle_of_competence():
+    out = valuation_verdict(70.0, {"A": 100.0}, coc={"within": False, "flags": ["x"]})
+    assert out["confidence"] == "Low"
+    assert any("circle of competence" in c.lower() for c in out["caveats"])
+
+
+def test_verdict_flags_cyclical_peak_earnings_caveat():
+    out = valuation_verdict(70.0, {"A": 100.0, "B": 105.0}, lynch={"category": "Cyclical"})
+    assert any("cyclical" in c.lower() for c in out["caveats"])
+
+
 # ── circle_of_competence ──────────────────────────────────────────────────────
 
 def test_circle_of_competence_flags_financial_sector():
@@ -219,6 +265,12 @@ def test_compute_valuation_exposes_capm_discount_and_dcf_range():
     assert out["dcf_bear"] is not None and out["dcf_bull"] is not None
     assert out["dcf_bear"] < out["dcf_bull"]
     assert out["inputs"]["beta"] == 1.2
+
+
+def test_compute_valuation_includes_verdict():
+    out = compute_valuation(_quote())
+    assert "verdict" in out
+    assert "signal" in out["verdict"] and "blended_mos" in out["verdict"]
 
 
 def test_compute_valuation_with_financials_populates_epv_and_roic():

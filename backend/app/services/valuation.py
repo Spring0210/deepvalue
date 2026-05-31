@@ -223,6 +223,94 @@ def circle_of_competence_check(quote: dict) -> dict:
     return {"within": len(flags) == 0, "flags": flags, "complexity": complexity}
 
 
+# ── Actionable verdict ────────────────────────────────────────────────────────
+
+def valuation_verdict(
+    price: Optional[float],
+    methods: dict,
+    required_mos: float = 0.30,
+    coc: Optional[dict] = None,
+    lynch: Optional[dict] = None,
+) -> dict:
+    """Blend the intrinsic-value methods into one margin-of-safety signal.
+
+    Uses the MEDIAN intrinsic value (robust to a single outlier model) and
+    reports how many independent methods corroborate undervaluation, so the user
+    sees a decision *and* its evidence rather than four disconnected gauges.
+
+    Signal tiers (Graham's margin-of-safety doctrine, default 30%):
+      BUY         — MoS ≥ required
+      ACCUMULATE  — 0 ≤ MoS < required
+      HOLD / REVIEW — −15% ≤ MoS < 0
+      OVERVALUED  — MoS < −15%
+
+    Confidence follows Munger's "know what you don't know": downgraded when the
+    methods disagree widely, when the business is outside a clear circle of
+    competence, or when it is cyclical (today's earnings may be at a peak).
+
+    `methods` maps a label to an intrinsic value (None / ≤ 0 are ignored).
+    None-safe. Time O(k log k) for the median, Space O(k).
+    """
+    usable = {k: v for k, v in methods.items() if v and v > 0}
+    if not price or price <= 0 or not usable:
+        return {
+            "signal": "INSUFFICIENT DATA", "tone": "neutral",
+            "blended_iv": None, "blended_mos": None, "required_mos": required_mos,
+            "confidence": "Low", "agreement": "no usable valuation models",
+            "methods": {}, "caveats": [],
+        }
+
+    ivs = sorted(usable.values())
+    n = len(ivs)
+    median = ivs[n // 2] if n % 2 else (ivs[n // 2 - 1] + ivs[n // 2]) / 2
+    mos = (median - price) / median
+    bullish = sum(1 for v in usable.values() if v > price)
+    per_method = {
+        k: {"iv": round(v, 2), "mos": round((v - price) / v, 4)}
+        for k, v in usable.items()
+    }
+
+    if mos >= required_mos:
+        signal, tone = "BUY", "pass"
+    elif mos >= 0:
+        signal, tone = "ACCUMULATE", "watch"
+    elif mos >= -0.15:
+        signal, tone = "HOLD / REVIEW", "watch"
+    else:
+        signal, tone = "OVERVALUED", "fail"
+
+    dispersion = (ivs[-1] - ivs[0]) / median if median else 0.0
+    confidence = "High"
+    caveats: list[str] = []
+    if dispersion > 0.6:
+        confidence = "Medium"
+        caveats.append(
+            f"Valuation methods disagree widely (±{dispersion / 2 * 100:.0f}% around "
+            "the median) — the intrinsic value is uncertain."
+        )
+    if coc and not coc.get("within", True):
+        confidence = "Low"
+        caveats.append(
+            "Outside a clear circle of competence — treat the intrinsic value with "
+            "extra caution."
+        )
+    if lynch and lynch.get("category") == "Cyclical":
+        caveats.append(
+            "Cyclical business: today's earnings may be near a peak, so judge on "
+            "mid-cycle earnings rather than the latest year."
+        )
+        if confidence == "High":
+            confidence = "Medium"
+
+    return {
+        "signal": signal, "tone": tone,
+        "blended_iv": round(median, 2), "blended_mos": round(mos, 4),
+        "required_mos": required_mos, "confidence": confidence,
+        "agreement": f"{bullish} of {n} methods see upside",
+        "methods": per_method, "caveats": caveats,
+    }
+
+
 # ── Top-level ─────────────────────────────────────────────────────────────────
 
 def compute_valuation(quote: dict, data: dict | None = None) -> dict:
@@ -267,8 +355,14 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
 
     coc = circle_of_competence_check(quote)
     lynch = classify_lynch(quote, data)
+    verdict = valuation_verdict(
+        price,
+        {"Graham": graham, "DCF (base)": dcf_base, "FCF yield": fcf_val, "EPV": epv},
+        coc=coc, lynch=lynch,
+    )
 
     return {
+        "verdict":           verdict,
         "graham":            round(graham, 2) if graham else None,
         "dcf_base":          dcf_base,
         "dcf_bear":          dcf_range["bear"],
