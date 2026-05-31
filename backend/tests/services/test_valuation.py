@@ -12,13 +12,18 @@ from app.services.valuation import (
     circle_of_competence_check,
     compute_roic,
     compute_valuation,
+    compute_wacc,
     dcf_intrinsic_value,
     dcf_valuation_range,
     earnings_power_value,
     fcf_yield_value,
     graham_number,
     margin_of_safety,
+    owner_earnings,
+    owner_earnings_dcf_range,
+    price_decomposition,
     reverse_dcf_growth,
+    two_stage_dcf,
     valuation_verdict,
 )
 
@@ -160,6 +165,87 @@ def test_dcf_range_none_safe_on_missing_inputs():
     assert dcf_valuation_range(None, 1e9, 0.10, 0.10) == {"bear": None, "base": None, "bull": None}
 
 
+# ── owner earnings + WACC + two-stage DCF ─────────────────────────────────────
+
+def test_owner_earnings_basic():
+    # NI 100 + D&A 30 − CapEx 20 = 110.
+    assert owner_earnings(100.0, 30.0, -20.0) == 110.0
+
+
+def test_owner_earnings_prefers_maintenance_capex():
+    assert owner_earnings(100.0, 30.0, -50.0, maintenance_capex=20.0) == 110.0
+
+
+def test_owner_earnings_none_on_missing_input():
+    assert owner_earnings(None, 30.0, -20.0) is None
+    assert owner_earnings(100.0, None, -20.0) is None
+
+
+def test_wacc_no_debt_equals_cost_of_equity():
+    assert compute_wacc(1.0, equity=100e9, debt=0, interest_expense=0, tax_rate=0.21) \
+        == capm_discount_rate(1.0)
+
+
+def test_wacc_lowered_by_cheap_after_tax_debt():
+    w = compute_wacc(1.0, equity=50e9, debt=50e9, interest_expense=2.5e9, tax_rate=0.21)
+    assert w < capm_discount_rate(1.0)
+
+
+def test_two_stage_dcf_positive_when_roic_beats_wacc():
+    iv = two_stage_dcf(base_cf=10e9, shares=1e9, wacc=0.09, roic=0.20, g1=0.10)
+    assert iv is not None and iv > 0
+
+
+def test_two_stage_dcf_collapses_to_no_growth_when_roic_below_wacc():
+    # Growth below the cost of capital destroys value → no-growth perpetuity.
+    iv = two_stage_dcf(base_cf=9e9, shares=1e9, wacc=0.09, roic=0.05, g1=0.20)
+    assert iv == round((9e9 / 0.09) / 1e9, 2)   # 100.0
+
+
+def test_two_stage_dcf_higher_growth_higher_value():
+    lo = two_stage_dcf(10e9, 1e9, 0.09, 0.20, 0.06)
+    hi = two_stage_dcf(10e9, 1e9, 0.09, 0.20, 0.14)
+    assert lo is not None and hi is not None and hi > lo
+
+
+def test_two_stage_dcf_none_on_bad_inputs():
+    assert two_stage_dcf(0, 1e9, 0.09, 0.20, 0.10) is None
+    assert two_stage_dcf(10e9, 1e9, 0.02, 0.20, 0.10) is None   # wacc ≤ terminal
+
+
+def test_owner_dcf_range_orders_bear_base_bull():
+    r = owner_earnings_dcf_range(10e9, 1e9, wacc=0.09, roic=0.20, g1=0.10)
+    assert r["bear"] < r["base"] < r["bull"]
+
+
+def test_owner_dcf_range_none_safe():
+    assert owner_earnings_dcf_range(None, 1e9, 0.09, 0.20, 0.10) == {"bear": None, "base": None, "bull": None}
+
+
+# ── price decomposition (value↔growth bridge) ─────────────────────────────────
+
+def test_price_decomposition_splits_epv_and_growth():
+    d = price_decomposition(100.0, 60.0)
+    assert abs(d["epv_share"] - 0.60) < 1e-6
+    assert abs(d["growth_share"] - 0.40) < 1e-6
+    assert d["growth_premium"] == 40.0
+
+
+def test_price_decomposition_flags_price_below_no_growth_value():
+    d = price_decomposition(50.0, 60.0)
+    assert d["epv_share"] == 1.0 and d["growth_share"] == 0.0
+
+
+def test_price_decomposition_none_on_bad_inputs():
+    assert price_decomposition(0, 60.0) is None
+    assert price_decomposition(100.0, None) is None
+
+
+def test_compute_valuation_includes_price_decomposition_with_financials():
+    out = compute_valuation(_quote(), _financials_fixture())
+    assert "price_decomposition" in out
+
+
 # ── reverse_dcf_growth ────────────────────────────────────────────────────────
 
 def test_reverse_dcf_recovers_the_growth_that_made_the_price():
@@ -263,6 +349,23 @@ def _quote(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def _financials_fixture():
+    return {
+        "financials": {"2025-12-31": {
+            "Operating Income": 120e9, "Tax Provision": 20e9, "Pretax Income": 100e9,
+            "Net Income": 95e9, "Interest Expense": -3e9, "Reconciled Depreciation": 12e9,
+        }},
+        "balanceSheet": {"2025-12-31": {
+            "Total Debt": 110e9, "Common Stock Equity": 60e9,
+            "Cash And Cash Equivalents": 30e9,
+        }},
+        "cashflow": {"2025-12-31": {
+            "Depreciation And Amortization": 12e9, "Capital Expenditure": -11e9,
+            "Net Income From Continuing Operations": 95e9,
+        }},
+    }
 
 
 def test_compute_valuation_returns_all_keys_without_financials():

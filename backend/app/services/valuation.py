@@ -129,6 +129,140 @@ def dcf_intrinsic_value(
     return round(pv / shares, 2)
 
 
+# ── Owner earnings, WACC, and the two-stage DCF (Buffett/Munger) ──────────────
+
+def owner_earnings(
+    net_income: Optional[float],
+    dep_amort: Optional[float],
+    capex: Optional[float],
+    maintenance_capex: Optional[float] = None,
+    wc_change: float = 0.0,
+) -> Optional[float]:
+    """Buffett owner earnings = NI + D&A − maintenance CapEx − ΔWorking capital.
+
+    Maintenance CapEx is rarely disclosed; absent it we use total CapEx, which
+    understates owner earnings for heavy growth investors — the conservative
+    (safe) direction. Returns None on missing inputs. Time O(1), Space O(1).
+    """
+    if net_income is None or dep_amort is None or capex is None:
+        return None
+    maint = maintenance_capex if maintenance_capex is not None else abs(capex)
+    return net_income + dep_amort - maint - (wc_change or 0.0)
+
+
+def compute_wacc(
+    beta: Optional[float],
+    equity: Optional[float],
+    debt: Optional[float],
+    interest_expense: Optional[float],
+    tax_rate: Optional[float],
+    risk_free: float = RISK_FREE,
+    erp: float = EQUITY_RISK_PREMIUM,
+) -> float:
+    """WACC = wE·Re + wD·Rd·(1−tax). Re via CAPM, Rd ≈ interest / debt.
+
+    Fallbacks: no/zero debt → WACC = Re; bad Rd clamped ≤ 15%; missing tax → 21%.
+    Time O(1), Space O(1).
+    """
+    re = capm_discount_rate(beta, risk_free, erp)
+    if not debt or debt <= 0:
+        return re
+    rd = min(abs(interest_expense) / debt, 0.15) if interest_expense else 0.05
+    t = tax_rate if (tax_rate is not None and 0 <= tax_rate < 1) else 0.21
+    v = (equity or 0) + debt
+    if v <= 0:
+        return re
+    return round((equity or 0) / v * re + debt / v * rd * (1 - t), 4)
+
+
+def two_stage_dcf(
+    base_cf: Optional[float],
+    shares: Optional[float],
+    wacc: float,
+    roic: Optional[float],
+    g1: float,
+    n1: int = 5,
+    g_terminal: float = 0.025,
+    fade_years: int = 5,
+) -> Optional[float]:
+    """Per-share intrinsic value via a two-stage DCF on owner earnings / FCF.
+
+    Stage 1: grow at g1 for n1 years. Stage 2: linearly fade g1 → g_terminal over
+    fade_years (no flat-then-cliff artifact). Gordon terminal value.
+
+    Munger's value-creation hurdle: growth only creates value when ROIC > WACC.
+    If ROIC ≤ WACC we do NOT capitalize growth — we collapse to the no-growth
+    perpetuity (growth at sub-cost-of-capital destroys value).
+
+    Edge cases: non-positive base_cf/shares → None; wacc ≤ g_terminal → None.
+    Time O(n1 + fade_years), Space O(1).
+    """
+    if not base_cf or base_cf <= 0 or not shares or shares <= 0:
+        return None
+    if wacc <= g_terminal:
+        return None
+    if roic is not None and roic <= wacc:
+        return round((base_cf / wacc) / shares, 2)
+
+    pv, cf = 0.0, base_cf
+    for t in range(1, n1 + 1):
+        cf *= (1 + g1)
+        pv += cf / (1 + wacc) ** t
+
+    g, step, yr = g1, (g1 - g_terminal) / max(fade_years, 1), n1
+    for _ in range(fade_years):
+        yr += 1
+        g -= step
+        cf *= (1 + g)
+        pv += cf / (1 + wacc) ** yr
+
+    tv = cf * (1 + g_terminal) / (wacc - g_terminal)
+    pv += tv / (1 + wacc) ** yr
+    return round(pv / shares, 2)
+
+
+def owner_earnings_dcf_range(
+    oe: Optional[float],
+    shares: Optional[float],
+    wacc: float,
+    roic: Optional[float],
+    g1: float,
+    n1: int = 5,
+    g_terminal: float = 0.025,
+    fade_years: int = 5,
+) -> dict:
+    """Bear / base / bull two-stage owner-earnings DCF. Bear = lower growth +
+    higher WACC; bull = higher growth + lower WACC. Time O(1), Space O(1)."""
+    if not oe or oe <= 0 or not shares or shares <= 0:
+        return {"bear": None, "base": None, "bull": None}
+    bull_wacc = max(g_terminal + 0.01, wacc - 0.02)
+    return {
+        "bear": two_stage_dcf(oe, shares, wacc + 0.02, roic, max(0.0, g1 - 0.04), n1, g_terminal, fade_years),
+        "base": two_stage_dcf(oe, shares, wacc, roic, g1, n1, g_terminal, fade_years),
+        "bull": two_stage_dcf(oe, shares, bull_wacc, roic, min(0.30, g1 + 0.04), n1, g_terminal, fade_years),
+    }
+
+
+def price_decomposition(price: Optional[float], epv: Optional[float]) -> Optional[dict]:
+    """Split the current price into the value of the business as-is (EPV,
+    no-growth) versus the growth premium — the value↔growth bridge.
+
+    'X% of the price is current earnings power; Y% is growth you're paying for.'
+    When EPV ≥ price the stock is below its no-growth value (cheap even with zero
+    growth). Returns None on bad inputs. Time O(1), Space O(1).
+    """
+    if not price or price <= 0 or not epv or epv <= 0:
+        return None
+    epv_share = min(epv / price, 1.0)
+    return {
+        "epv": round(epv, 2),
+        "epv_share": round(epv_share, 4),
+        "growth_share": round(1.0 - epv_share, 4),
+        "growth_premium": round(max(price - epv, 0.0), 2),
+        "below_no_growth_value": epv >= price,
+    }
+
+
 def fcf_yield_value(
     fcf: Optional[float],
     shares: Optional[float],
@@ -382,16 +516,24 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
     # P/FCF
     p_fcf = round(mktcap / fcf, 1) if (mktcap and fcf and fcf > 0) else None
 
-    # EPV and ROIC — require financial statement data
+    # EPV, ROIC, WACC and the two-stage owner-earnings DCF — need statement data
     epv  = None
     roic = None
+    wacc = None
+    oe   = None
+    owner_range = {"bear": None, "base": None, "bull": None}
     if data:
         fin = data.get("financials", {})
         bal = data.get("balanceSheet", {})
+        cf  = data.get("cashflow", {})
 
         op_income    = _latest(fin, "Operating Income")
         tax_prov     = _latest(fin, "Tax Provision")
         pretax       = _latest(fin, "Pretax Income")
+        interest     = _latest(fin, "Interest Expense")
+        net_income   = _latest(fin, "Net Income")
+        dep_amort    = _latest(cf, "Depreciation And Amortization") or _latest(fin, "Reconciled Depreciation")
+        capex        = _latest(cf, "Capital Expenditure")
         total_debt, total_equity, cash = invested_capital_inputs(bal)
 
         tax_rate = (tax_prov / pretax) if (tax_prov and pretax and pretax > 0) else None
@@ -399,13 +541,21 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
 
         epv  = earnings_power_value(nopat, shares, discount_rate=discount)
         roic = compute_roic(op_income, tax_rate, total_debt, total_equity, cash)
+        wacc = compute_wacc(beta, total_equity, total_debt, interest, tax_rate)
+        oe   = owner_earnings(net_income, dep_amort, capex)
+        owner_range = owner_earnings_dcf_range(oe, shares, wacc, roic, default_growth)
 
     coc = circle_of_competence_check(quote)
     lynch = classify_lynch(quote, data)
     implied_growth = reverse_dcf_growth(price, fcf, shares, discount)
+    decomposition = price_decomposition(price, epv)
+
+    # The two-stage owner-earnings DCF is the credible fair-value spine; fall
+    # back to the single-stage FCF range when statement data is unavailable.
+    spine = owner_range if owner_range["base"] else dcf_range
     verdict = valuation_verdict(
         price,
-        fair_low=dcf_range["bear"], fair_base=dcf_base, fair_high=dcf_range["bull"],
+        fair_low=spine["bear"], fair_base=spine["base"], fair_high=spine["bull"],
         floor=epv,
         implied_growth=implied_growth, reference_growth=default_growth,
         coc=coc, lynch=lynch,
@@ -419,6 +569,9 @@ def compute_valuation(quote: dict, data: dict | None = None) -> dict:
         "dcf_bull":          dcf_range["bull"],
         "fcf_yield_value":   fcf_val,
         "epv":               epv,
+        "owner_earnings_dcf": owner_range,
+        "wacc":              wacc,
+        "price_decomposition": decomposition,
         "current_price":     price,
         "discount_rate":     discount,
         "mos_graham":        margin_of_safety(price, graham),
