@@ -181,8 +181,9 @@ function StatCell({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 // ── Verdict hero — price positioned in a growth-aware fair-value range ────────
-function VerdictHero({ v, sym, required, onRequired }: {
+function VerdictHero({ v, decomp, sym, required, onRequired }: {
   v: NonNullable<ReturnType<typeof useStock>['valuation']>['verdict']
+  decomp: NonNullable<ReturnType<typeof useStock>['valuation']>['price_decomposition']
   sym: string
   required: number
   onRequired: (n: number) => void
@@ -250,6 +251,24 @@ function VerdictHero({ v, sym, required, onRequired }: {
         <p className="mt-1 text-[12px]" style={{ color: 'rgba(235,235,245,0.4)' }}>
           No-growth floor (EPV): <span className="font-mono">{sym}{v.floor.toFixed(0)}</span>.
         </p>
+      )}
+
+      {/* What you're paying for — the value↔growth bridge */}
+      {decomp && (
+        <div className="mt-4">
+          <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: 'rgba(235,235,245,0.3)' }}>
+            What you're paying for
+          </p>
+          <div className="flex h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div style={{ width: `${decomp.epv_share * 100}%`, background: 'rgba(90,200,245,0.55)' }} />
+            <div style={{ width: `${decomp.growth_share * 100}%`, background: 'rgba(251,191,36,0.6)' }} />
+          </div>
+          <p className="mt-1.5 text-[12px]" style={{ color: 'rgba(235,235,245,0.55)' }}>
+            {decomp.below_no_growth_value
+              ? <>Price is below the no-growth value (EPV <span className="font-mono">{sym}{decomp.epv.toFixed(0)}</span>) — cheap even with zero growth.</>
+              : <><span style={{ color: '#5AC8F5' }}>{(decomp.epv_share * 100).toFixed(0)}%</span> business as-is (EPV) · <span style={{ color: '#FBBF24' }}>{(decomp.growth_share * 100).toFixed(0)}%</span> growth premium</>}
+          </p>
+        </div>
       )}
 
       {/* Required margin-of-safety control → live buy threshold */}
@@ -325,7 +344,7 @@ export default function ValuationPanel() {
     <div className="space-y-4">
 
       {/* Verdict — the single actionable answer */}
-      <VerdictHero v={valuation.verdict} sym={sym} required={requiredMos} onRequired={setRequiredMos} />
+      <VerdictHero v={valuation.verdict} decomp={valuation.price_decomposition} sym={sym} required={requiredMos} onRequired={setRequiredMos} />
 
       {/* Circle of Competence warning */}
       {coc && !coc.within && (

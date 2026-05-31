@@ -74,8 +74,17 @@ export interface ValuationVerdict {
   rationale: string
 }
 
+export interface PriceDecomposition {
+  epv: number
+  epv_share: number
+  growth_share: number
+  growth_premium: number
+  below_no_growth_value: boolean
+}
+
 export interface StockValuation {
   verdict: ValuationVerdict | null
+  price_decomposition: PriceDecomposition | null
   graham: number | null
   dcf_base: number | null
   dcf_bear: number | null
