@@ -24,6 +24,15 @@ _LETTERS_DIR = _DATA_DIR / "buffett_letters"
 _INDEX_PATH  = _DATA_DIR / "faiss_index"
 _SIGNATURE   = _INDEX_PATH / ".signature"
 
+# FAISS L2 distance for this corpus/embedding model — lower means more similar.
+# Empirically measured: on-topic queries ("economic moat", "margin of safety")
+# score <=~1.07; off-topic queries ("Can I buy Micron Technology", unrelated
+# small talk) score >=~1.30. 1.2 sits in that gap. Without this cutoff,
+# similarity_search always returns its k nearest neighbors regardless of how
+# distant they are, so an off-topic question still gets k chunks dressed up
+# as citations.
+_RELEVANCE_THRESHOLD = 1.2
+
 _vector_db: FAISS | None = None
 _embeddings: HuggingFaceEmbeddings | None = None
 _groq_client = None
@@ -138,7 +147,8 @@ def retrieve_with_sources(query: str, k: int = 3) -> tuple[str, list[dict]]:
     duration of the call so the LLM can cite chunks as [1] / [2] / ..."""
     if _vector_db is None:
         init_rag()
-    docs = _vector_db.similarity_search(query, k=k)  # type: ignore[union-attr]
+    scored = _vector_db.similarity_search_with_score(query, k=k)  # type: ignore[union-attr]
+    docs = [doc for doc, score in scored if score <= _RELEVANCE_THRESHOLD]
     sources: list[dict] = []
     parts: list[str] = []
     for i, d in enumerate(docs, start=1):
@@ -198,9 +208,15 @@ def _build_chat_user_message(
         else "No stock data loaded."
     )
 
+    kb_block = rag_context or (
+        "No relevant excerpts found in the knowledge base for this question. "
+        "Answer from general reasoning and the stock data below instead, and "
+        "do not cite [n] chunk numbers since none were retrieved."
+    )
+
     user_msg = (
         "─── VALUE INVESTING KNOWLEDGE BASE ───\n"
-        f"{rag_context}\n\n"
+        f"{kb_block}\n\n"
         "─── CURRENT STOCK DATA ───\n"
         f"{stock_context}\n\n"
         "─── USER QUESTION ───\n"

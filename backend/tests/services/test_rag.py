@@ -112,10 +112,10 @@ def test_retrieve_with_sources_assigns_ids_and_truncates(monkeypatch):
             self.page_content = page_content
             self.metadata = {"source": source}
     class FakeDB:
-        def similarity_search(self, _q, k=3):
+        def similarity_search_with_score(self, _q, k=3):
             return [
-                FakeDoc(long_text, "buffett_knowledge"),
-                FakeDoc("short letter content", "2020"),
+                (FakeDoc(long_text, "buffett_knowledge"), 0.4),
+                (FakeDoc("short letter content", "2020"), 0.6),
             ]
     monkeypatch.setattr(rag, "_vector_db", FakeDB())
 
@@ -126,6 +126,56 @@ def test_retrieve_with_sources_assigns_ids_and_truncates(monkeypatch):
     assert sources[0]["snippet"].endswith("…")        # truncated
     assert not sources[1]["snippet"].endswith("…")    # short, untruncated
     assert len(sources[0]["snippet"]) <= 281
+
+
+def test_retrieve_with_sources_drops_low_relevance_chunks(monkeypatch):
+    """Chunks farther than the relevance cutoff (FAISS L2 distance) must not
+    be surfaced as citations — this is the Micron-question bug: off-topic
+    queries still got the k-nearest chunks dressed up as sources."""
+    class FakeDoc:
+        def __init__(self, page_content, source):
+            self.page_content = page_content
+            self.metadata = {"source": source}
+    class FakeDB:
+        def similarity_search_with_score(self, _q, k=3):
+            return [
+                (FakeDoc("on-topic moat content", "buffett_knowledge"), 0.55),
+                (FakeDoc("borderline content", "2019"), 1.05),
+                (FakeDoc("off-topic unrelated content", "2015"), 1.45),
+            ]
+    monkeypatch.setattr(rag, "_vector_db", FakeDB())
+
+    ctx, sources = rag.retrieve_with_sources("Can I buy Micron Technology", k=3)
+    assert [s["source"] for s in sources] == ["buffett_knowledge", "2019"]
+    assert "off-topic unrelated content" not in ctx
+
+
+def test_retrieve_with_sources_returns_empty_when_nothing_relevant(monkeypatch):
+    class FakeDoc:
+        def __init__(self, page_content, source):
+            self.page_content = page_content
+            self.metadata = {"source": source}
+    class FakeDB:
+        def similarity_search_with_score(self, _q, k=3):
+            return [
+                (FakeDoc("irrelevant a", "2015"), 1.39),
+                (FakeDoc("irrelevant b", "2021"), 1.47),
+                (FakeDoc("irrelevant c", "2017"), 1.48),
+            ]
+    monkeypatch.setattr(rag, "_vector_db", FakeDB())
+
+    ctx, sources = rag.retrieve_with_sources("Can I buy Micron Technology", k=3)
+    assert ctx == ""
+    assert sources == []
+
+
+# ── _build_chat_user_message ──────────────────────────────────────────────────
+
+def test_build_chat_user_message_falls_back_when_no_relevant_context(monkeypatch):
+    monkeypatch.setattr(rag, "retrieve_with_sources", lambda q, k=3: ("", []))
+    user_msg, sources = rag._build_chat_user_message("Can I buy Micron?", "MU", [])
+    assert sources == []
+    assert "No relevant" in user_msg
 
 
 # ── event-typed SSE framing ──────────────────────────────────────────────────
